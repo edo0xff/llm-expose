@@ -155,6 +155,7 @@ class TestOrchestrator:
         provider.complete = AsyncMock(return_value="The answer is 42.")
         client = MagicMock()
         client.start = AsyncMock()
+        client.stop = AsyncMock()
         orch = Orchestrator(config=config, provider=provider, client=client)
         return orch, provider, client
 
@@ -182,6 +183,7 @@ class TestOrchestrator:
         orch, _, client = self._make_orchestrator()
         await orch.run()
         client.start.assert_awaited_once()
+        client.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_run_sets_client_handler(self) -> None:
@@ -195,3 +197,13 @@ class TestOrchestrator:
         assert len(captured) == 1
         assert captured[0].__func__ is Orchestrator._handle_message
         assert captured[0].__self__ is orch
+
+    @pytest.mark.asyncio
+    async def test_run_stops_client_when_start_fails(self) -> None:
+        orch, _, client = self._make_orchestrator()
+        client.start = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await orch.run()
+
+        client.stop.assert_awaited_once()

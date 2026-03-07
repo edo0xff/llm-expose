@@ -52,7 +52,11 @@ class TestBuildModelId:
 
     def test_local_provider_uses_openai_prefix(self) -> None:
         p = self._provider("local", "llama3")
-        assert p._build_model_id() == "openai/llama3"
+        assert p._build_model_id() == "llama3"
+
+    def test_local_provider_strips_openai_prefix(self) -> None:
+        p = self._provider("local", "openai/llama3")
+        assert p._build_model_id() == "llama3"
 
     def test_already_qualified_model_unchanged(self) -> None:
         p = self._provider("openai", "openai/gpt-4o")
@@ -120,6 +124,27 @@ class TestComplete:
 
         assert result == ""
 
+    @pytest.mark.asyncio
+    async def test_complete_local_uses_openai_sdk(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="local",
+            model="llama3",
+            base_url="http://localhost:1234/v1",
+        )
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "local reply"
+
+        with patch("llm_expose.providers.litellm_provider.AsyncOpenAI") as mock_openai:
+            mock_client = mock_openai.return_value
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+            provider = LiteLLMProvider(cfg)
+            result = await provider.complete([{"role": "user", "content": "Hi"}])
+
+            assert result == "local reply"
+            mock_client.chat.completions.create.assert_awaited_once()
+
 
 class TestStream:
     @pytest.mark.asyncio
@@ -158,3 +183,29 @@ class TestStream:
                 chunks.append(chunk)
 
         assert chunks == ["Hi", "!"]
+
+    @pytest.mark.asyncio
+    async def test_stream_local_uses_openai_sdk(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="local",
+            model="llama3",
+            base_url="http://localhost:1234/v1",
+        )
+
+        async def _mock_stream():
+            for token in ["local", " ", "stream"]:
+                chunk = MagicMock()
+                chunk.choices[0].delta.content = token
+                yield chunk
+
+        with patch("llm_expose.providers.litellm_provider.AsyncOpenAI") as mock_openai:
+            mock_client = mock_openai.return_value
+            mock_client.chat.completions.create = AsyncMock(return_value=_mock_stream())
+
+            provider = LiteLLMProvider(cfg)
+            chunks = []
+            async for chunk in provider.stream([{"role": "user", "content": "Hi"}]):
+                chunks.append(chunk)
+
+            assert chunks == ["local", " ", "stream"]
+            mock_client.chat.completions.create.assert_awaited_once()

@@ -70,4 +70,9 @@ class Orchestrator:
         # Wire our handler into the client via the public setter
         self._client.set_handler(self._handle_message)
         logger.info("Starting orchestrator for exposure '%s'", self._config.name)
-        await self._client.start()
+        try:
+            await self._client.start()
+        finally:
+            # Always attempt a graceful shutdown to release client resources
+            # (e.g., Telegram long-polling session) even on Ctrl+C/errors.
+            await self._client.stop()

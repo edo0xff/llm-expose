@@ -15,11 +15,13 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
+from telegram.error import Conflict
 
 from llm_expose.config import (
     ExposureConfig,
     ProviderConfig,
     TelegramClientConfig,
+    delete_config,
     list_configs,
     load_config,
     save_config,
@@ -58,6 +60,63 @@ _BANNER = r"""
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Common models by provider (curated list of popular models)
+_MODELS_BY_PROVIDER = {
+    "openai": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo",
+        "o1-preview",
+        "o1-mini",
+        "other",
+    ],
+    "anthropic": [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
+        "claude-3-sonnet-20240229",
+        "claude-3-haiku-20240307",
+        "other",
+    ],
+    "google": [
+        "gemini-2.0-flash-exp",
+        "gemini-exp-1206",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "other",
+    ],
+    "cohere": [
+        "command-r-plus",
+        "command-r",
+        "command",
+        "command-light",
+        "other",
+    ],
+    "mistral": [
+        "mistral-large-latest",
+        "mistral-medium-latest",
+        "mistral-small-latest",
+        "codestral-latest",
+        "open-mistral-nemo",
+        "other",
+    ],
+    "github_copilot": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo",
+        "claude-3.5-sonnet",
+        "claude-3-5-sonnet-20241022",
+        "o1-preview",
+        "o1-mini",
+        "other",
+    ],
+}
 
 
 def _print_banner() -> None:
@@ -115,10 +174,23 @@ def create() -> None:
     if provider_type.startswith("Online"):
         online_provider = _select_from_list(
             "Select online provider:",
-            ["openai", "anthropic", "google", "cohere", "mistral", "other"],
+            ["openai", "anthropic", "google", "cohere", "mistral", "github_copilot", "other"],
         )
         if online_provider == "other":
             online_provider = Prompt.ask("  Enter provider name (as recognised by LiteLLM)")
+            model = Prompt.ask(f"  Model name for [cyan]{online_provider}[/cyan]")
+        else:
+            # Show available models for this provider
+            available_models = _MODELS_BY_PROVIDER.get(online_provider, ["other"])
+            selected_model = _select_from_list(
+                f"Select model for {online_provider}:",
+                available_models,
+            )
+            if selected_model == "other":
+                model = Prompt.ask(f"  Enter model name for [cyan]{online_provider}[/cyan]")
+            else:
+                model = selected_model
+        
         provider_name = online_provider.lower().strip()
         base_url: Optional[str] = None
     else:
@@ -127,8 +199,7 @@ def create() -> None:
             "  Base URL of your local server",
             default="http://localhost:1234/v1",
         )
-
-    model = Prompt.ask(f"  Model name for [cyan]{provider_name}[/cyan]")
+        model = Prompt.ask(f"  Model name for [cyan]{provider_name}[/cyan]")
 
     api_key: Optional[str] = None
     if provider_name != "local":
@@ -166,7 +237,7 @@ def create() -> None:
     )
     bot_token = ""
     while not bot_token:
-        raw_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])", password=True)
+        raw_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])")
         bot_token = raw_token.strip()
         if not bot_token:
             console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
@@ -244,6 +315,173 @@ def load(
     _start_service(config)
 
 
+@app.command()
+def edit(
+    name: Optional[str] = typer.Argument(None, help="Name of the exposure to edit"),
+) -> None:
+    """Edit an existing exposure configuration."""
+    names = list_configs()
+    if not names:
+        console.print("[yellow]No configurations found. Run [bold]llm-expose create[/bold] to create one.[/yellow]")
+        raise typer.Exit()
+
+    # Select config to edit
+    if name is None:
+        name = _select_from_list("Select configuration to edit:", names)
+    
+    # Load existing config
+    try:
+        config = load_config(name)
+    except FileNotFoundError:
+        console.print(f"[red]No configuration named '{name}' found.[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Failed to load configuration '{name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"\n[bold cyan]Editing configuration: {name}[/bold cyan]")
+    console.print("[dim]Press Enter to keep current value, or type new value.[/dim]\n")
+
+    # ---- Exposure name ------------------------------------------------
+    new_name = Prompt.ask(
+        f"[bold]Exposure name[/bold]",
+        default=config.name,
+    ).strip()
+    if not new_name:
+        console.print("[red]Name cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    # ---- Provider settings --------------------------------------------
+    console.print("\n[bold]Provider Settings:[/bold]")
+    
+    provider_name = Prompt.ask(
+        "  Provider name",
+        default=config.provider.provider_name,
+    ).strip()
+
+    model = Prompt.ask(
+        "  Model name",
+        default=config.provider.model,
+    ).strip()
+
+    base_url_default = config.provider.base_url or ""
+    base_url_input = Prompt.ask(
+        "  Base URL (leave empty if not needed)",
+        default=base_url_default,
+    ).strip()
+    base_url = base_url_input if base_url_input else None
+
+    # API key (masked input)
+    if config.provider.api_key:
+        console.print("  [dim]Current API key is set (hidden)[/dim]")
+        change_api_key = Confirm.ask("  Change API key?", default=False)
+        if change_api_key:
+            new_api_key = Prompt.ask("  New API key", default="").strip()
+            api_key = new_api_key if new_api_key else None
+        else:
+            api_key = config.provider.api_key
+    else:
+        new_api_key = Prompt.ask("  API key (leave empty if not needed)", default="").strip()
+        api_key = new_api_key if new_api_key else None
+
+    temperature_str = Prompt.ask(
+        "  Temperature",
+        default=str(config.provider.temperature),
+    )
+    try:
+        temperature = float(temperature_str)
+    except ValueError:
+        console.print(f"[yellow]  Invalid temperature, keeping {config.provider.temperature}.[/yellow]")
+        temperature = config.provider.temperature
+
+    max_tokens_str = Prompt.ask(
+        "  Max tokens",
+        default=str(config.provider.max_tokens),
+    )
+    try:
+        max_tokens = int(max_tokens_str)
+    except ValueError:
+        console.print(f"[yellow]  Invalid max_tokens, keeping {config.provider.max_tokens}.[/yellow]")
+        max_tokens = config.provider.max_tokens
+
+    provider_cfg = ProviderConfig(
+        provider_name=provider_name,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+    # ---- Client settings ----------------------------------------------
+    console.print("\n[bold]Client Settings:[/bold]")
+    console.print("  [dim]Current bot token is set (hidden)[/dim]")
+    change_token = Confirm.ask("  Change bot token?", default=False)
+    
+    if change_token:
+        bot_token = ""
+        while not bot_token:
+            raw_token = Prompt.ask("  New Telegram bot token")
+            bot_token = raw_token.strip()
+            if not bot_token:
+                console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+    else:
+        bot_token = config.client.bot_token
+
+    client_cfg = TelegramClientConfig(bot_token=bot_token)
+
+    # ---- Save ---------------------------------------------------------
+    updated_config = ExposureConfig(name=new_name, provider=provider_cfg, client=client_cfg)
+    
+    # If name changed, delete old config
+    if new_name != name:
+        try:
+            delete_config(name)
+        except Exception as exc:
+            console.print(f"[red]Failed to delete old configuration: {exc}[/red]")
+            raise typer.Exit(code=1) from exc
+
+    try:
+        saved_path = save_config(updated_config)
+    except Exception as exc:
+        console.print(f"[red]Failed to save configuration: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"\n[bold green]✓ Configuration '{new_name}' updated successfully![/bold green]\n"
+    )
+
+
+@app.command()
+def delete(
+    name: Optional[str] = typer.Argument(None, help="Name of the exposure to delete"),
+) -> None:
+    """Delete a saved exposure configuration."""
+    names = list_configs()
+    if not names:
+        console.print("[yellow]No configurations found.[/yellow]")
+        raise typer.Exit()
+
+    # Select config to delete
+    if name is None:
+        name = _select_from_list("Select configuration to delete:", names)
+    
+    # Confirm deletion
+    if not Confirm.ask(f"[bold red]Are you sure you want to delete '{name}'?[/bold red]", default=False):
+        console.print("[yellow]Deletion cancelled.[/yellow]")
+        raise typer.Exit()
+
+    try:
+        delete_config(name)
+        console.print(f"\n[bold green]✓ Configuration '{name}' deleted successfully.[/bold green]\n")
+    except FileNotFoundError:
+        console.print(f"[red]No configuration named '{name}' found.[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Failed to delete configuration '{name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -288,6 +526,13 @@ def _start_service(config: ExposureConfig) -> None:
 
     try:
         asyncio.run(orchestrator.run())
+    except Conflict:
+        console.print(
+            "\n[red]Telegram conflict detected:[/red] another process is already "
+            "polling updates for this bot token.\n"
+            "Stop other running instances (or webhook consumers) and try again."
+        )
+        raise typer.Exit(code=1)
     except KeyboardInterrupt:
         console.print("\n[yellow]Service stopped by user.[/yellow]")
 

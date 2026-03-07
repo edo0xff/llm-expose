@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import Update
@@ -29,6 +30,7 @@ class TelegramClient(BaseClient):
         super().__init__(handler)
         self._config = config
         self._app: Application | None = None
+        self._stop_event: asyncio.Event | None = None
 
     # ------------------------------------------------------------------
     # Telegram update handlers
@@ -73,6 +75,7 @@ class TelegramClient(BaseClient):
 
     async def start(self) -> None:
         """Build the Telegram application and start polling for updates."""
+        self._stop_event = asyncio.Event()
         self._app = (
             Application.builder()
             .token(self._config.bot_token)
@@ -89,15 +92,21 @@ class TelegramClient(BaseClient):
         await self._app.start()
         await self._app.updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot is running. Press Ctrl+C to stop.")
-        # Block until stop() is called
-        await self._app.updater.idle()
+
+        # Keep running until stop() signals shutdown.
+        await self._stop_event.wait()
 
     async def stop(self) -> None:
         """Stop polling and shut down the Telegram application."""
         if self._app is None:
             return
+
+        if self._stop_event is not None:
+            self._stop_event.set()
+
         logger.info("Stopping Telegram bot…")
         await self._app.updater.stop()
         await self._app.stop()
         await self._app.shutdown()
         self._app = None
+        self._stop_event = None

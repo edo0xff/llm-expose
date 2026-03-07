@@ -6,6 +6,7 @@ import os
 from typing import AsyncIterator
 
 import litellm
+from openai import AsyncOpenAI
 
 from llm_expose.config.models import ProviderConfig
 from llm_expose.providers.base import BaseProvider
@@ -25,11 +26,31 @@ class LiteLLMProvider(BaseProvider):
 
     def __init__(self, config: ProviderConfig) -> None:
         self._config = config
+        self._openai_client: AsyncOpenAI | None = None
         if config.api_key:
             # LiteLLM reads API keys from environment variables.  Set the
             # provider-specific variable so callers don't have to manage it.
             env_key = f"{config.provider_name.upper()}_API_KEY"
             os.environ.setdefault(env_key, config.api_key)
+        if self._is_local_provider():
+            # Most local OpenAI-compatible servers ignore API keys, but the
+            # SDK expects one; use a harmless default when omitted.
+            self._openai_client = AsyncOpenAI(
+                base_url=config.base_url or "http://localhost:1234/v1",
+                api_key=config.api_key or "local-not-required",
+            )
+
+    def _is_local_provider(self) -> bool:
+        """Return ``True`` when configuration targets a local model server."""
+        return self._config.provider_name.lower() == "local"
+
+    def _local_model_id(self) -> str:
+        """Return the model identifier expected by OpenAI-compatible local APIs."""
+        model = self._config.model.strip()
+        # Backward compatibility for existing configs saved as openai/<model>.
+        if model.startswith("openai/"):
+            return model.split("/", 1)[1]
+        return model
 
     def _build_model_id(self) -> str:
         """Return the fully-qualified model identifier expected by LiteLLM.
@@ -40,13 +61,12 @@ class LiteLLMProvider(BaseProvider):
         """
         name = self._config.provider_name.lower()
         model = self._config.model
+        if name == "local":
+            # Local providers are handled by the OpenAI SDK path.
+            return self._local_model_id()
         # If model already contains a slash it is already qualified.
         if "/" in model:
             return model
-        if name == "local":
-            # Local OpenAI-compatible server – use the openai/ prefix so
-            # LiteLLM routes to the openai SDK with the custom base_url.
-            return f"openai/{model}"
         return f"{name}/{model}"
 
     def _common_kwargs(self) -> dict:
@@ -74,6 +94,16 @@ class LiteLLMProvider(BaseProvider):
         Raises:
             litellm.exceptions.APIError: On provider-level errors.
         """
+        if self._is_local_provider():
+            assert self._openai_client is not None
+            response = await self._openai_client.chat.completions.create(
+                model=self._local_model_id(),
+                messages=messages,
+                temperature=self._config.temperature,
+                max_tokens=self._config.max_tokens,
+            )
+            return response.choices[0].message.content or ""
+
         response = await litellm.acompletion(
             messages=messages,
             **self._common_kwargs(),
@@ -89,6 +119,21 @@ class LiteLLMProvider(BaseProvider):
         Yields:
             Text delta strings as they are received from the model.
         """
+        if self._is_local_provider():
+            assert self._openai_client is not None
+            response = await self._openai_client.chat.completions.create(
+                model=self._local_model_id(),
+                messages=messages,
+                temperature=self._config.temperature,
+                max_tokens=self._config.max_tokens,
+                stream=True,
+            )
+            async for chunk in response:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+            return
+
         response = await litellm.acompletion(
             messages=messages,
             stream=True,
