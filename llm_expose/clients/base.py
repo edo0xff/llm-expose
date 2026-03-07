@@ -40,3 +40,12 @@ class BaseClient(ABC):
     @abstractmethod
     async def stop(self) -> None:
         """Gracefully disconnect from the platform and release resources."""
+
+    def set_handler(self, handler: MessageHandler) -> None:
+        """Replace the current message handler with *handler*.
+
+        Args:
+            handler: Async callable that receives a user message string and
+                returns the model's reply string.
+        """
+        self._handler = handler

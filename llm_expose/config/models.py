@@ -68,7 +68,12 @@ class ExposureConfig(BaseModel):
     @field_validator("name")
     @classmethod
     def name_must_not_be_empty(cls, v: str) -> str:
-        """Ensure name is a non-empty, filesystem-safe identifier."""
+        """Ensure name is a non-empty, cross-platform filesystem-safe identifier.
+
+        The forbidden set covers characters that are invalid in file names on
+        Windows (``/ \\ : * ? " < > |``) so configs remain portable across
+        operating systems.
+        """
         if not v or not v.strip():
             raise ValueError("Exposure name must not be empty or whitespace")
         stripped = v.strip()

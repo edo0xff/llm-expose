@@ -67,7 +67,7 @@ class Orchestrator:
         Registers :meth:`_handle_message` as the client's message handler and
         delegates lifecycle management to the client.
         """
-        # Wire our handler into the client
-        self._client._handler = self._handle_message  # noqa: SLF001
+        # Wire our handler into the client via the public setter
+        self._client.set_handler(self._handle_message)
         logger.info("Starting orchestrator for exposure '%s'", self._config.name)
         await self._client.start()

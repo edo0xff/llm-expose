@@ -185,9 +185,13 @@ class TestOrchestrator:
 
     @pytest.mark.asyncio
     async def test_run_sets_client_handler(self) -> None:
-        orch, provider, client = self._make_orchestrator()
+        orch, _, client = self._make_orchestrator()
+        # Track which handler is passed to set_handler
+        captured: list = []
+        client.set_handler = lambda h: captured.append(h)
         await orch.run()
-        # The orchestrator must have wired its _handle_message as the client handler.
-        # We verify this by calling the stored handler and checking the provider was invoked.
-        await client._handler("ping")
-        provider.complete.assert_awaited()
+        # The orchestrator must have wired its _handle_message via set_handler.
+        # Compare __func__ and __self__ because bound method objects are not singletons.
+        assert len(captured) == 1
+        assert captured[0].__func__ is Orchestrator._handle_message
+        assert captured[0].__self__ is orch

@@ -164,8 +164,13 @@ def create() -> None:
         ["Telegram"],
         # TODO: Add Discord, Slack once implemented
     )
-    bot_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])", password=True)
-    client_cfg = TelegramClientConfig(bot_token=bot_token.strip())
+    bot_token = ""
+    while not bot_token:
+        raw_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])", password=True)
+        bot_token = raw_token.strip()
+        if not bot_token:
+            console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+    client_cfg = TelegramClientConfig(bot_token=bot_token)
 
     # ---- Save ---------------------------------------------------------
     config = ExposureConfig(name=name, provider=provider_cfg, client=client_cfg)
