@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
-from pathlib import Path
+
 from typing import Optional
 
 import typer
@@ -17,15 +16,21 @@ from rich.table import Table
 from rich.text import Text
 from telegram.error import Conflict
 
+from litellm import validate_environment, models_by_provider
+
 from llm_expose.config import (
-    ExposureConfig,
     ProviderConfig,
     TelegramClientConfig,
-    delete_config,
-    list_configs,
-    load_config,
-    save_config,
+    delete_channel,
+    delete_model,
+    list_channels,
+    list_models,
+    load_channel,
+    load_model,
+    save_channel,
+    save_model,
 )
+from llm_expose.config.models import ExposureConfig
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.providers.litellm_provider import LiteLLMProvider
 from llm_expose.clients.telegram import TelegramClient
@@ -40,6 +45,16 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="rich",
 )
+
+# Subcommands for 'add' and 'delete'
+add_app = typer.Typer(help="Add model or channel configurations")
+delete_app = typer.Typer(help="Delete model or channel configurations")
+list_app = typer.Typer(help="List saved models or channels")
+
+app.add_typer(add_app, name="add")
+app.add_typer(delete_app, name="delete")
+app.add_typer(list_app, name="list")
+
 console = Console()
 
 # ---------------------------------------------------------------------------
@@ -47,77 +62,17 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 _BANNER = r"""
- _    _     __  __   _____                             
-| |  | |   |  \/  | |  ___|                            
-| |  | |   | \  / | | |__  __  __ _ __    ___   ___  ___ 
-| |  | |   | |\/| | |  __| \ \/ /| '_ \  / _ \ / __|/ _ \
-| |__| |   | |  | | | |___  >  < | |_) || (_) |\__ \  __/
- \____/    |_|  |_| |_____/ /_/\_\| .__/  \___/ |___/\___|
-                                   | |                    
-                                   |_|                    
+ _     _     __  __   _____                           
+| |   | |   |  \/  | | ____|_  ___ __   ___  ___  ___ 
+| |   | |   | |\/| | |  _| \ \/ / '_ \ / _ \/ __|/ _ \
+| |___| |___| |  | | | |___ >  <| |_) | (_) \__ \  __/
+|_____|_____|_|  |_| |_____/_/\_\ .__/ \___/|___/\___|
+                                |_|                                    
 """
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-# Common models by provider (curated list of popular models)
-_MODELS_BY_PROVIDER = {
-    "openai": [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4-turbo",
-        "gpt-4",
-        "gpt-3.5-turbo",
-        "o1-preview",
-        "o1-mini",
-        "other",
-    ],
-    "anthropic": [
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022",
-        "claude-3-opus-20240229",
-        "claude-3-sonnet-20240229",
-        "claude-3-haiku-20240307",
-        "other",
-    ],
-    "google": [
-        "gemini-2.0-flash-exp",
-        "gemini-exp-1206",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "other",
-    ],
-    "cohere": [
-        "command-r-plus",
-        "command-r",
-        "command",
-        "command-light",
-        "other",
-    ],
-    "mistral": [
-        "mistral-large-latest",
-        "mistral-medium-latest",
-        "mistral-small-latest",
-        "codestral-latest",
-        "open-mistral-nemo",
-        "other",
-    ],
-    "github_copilot": [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4-turbo",
-        "gpt-4",
-        "gpt-3.5-turbo",
-        "claude-3.5-sonnet",
-        "claude-3-5-sonnet-20241022",
-        "o1-preview",
-        "o1-mini",
-        "other",
-    ],
-}
-
 
 def _print_banner() -> None:
     """Display the welcome banner."""
@@ -147,46 +102,52 @@ def _select_from_list(prompt: str, options: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Commands
+# ADD Commands
 # ---------------------------------------------------------------------------
 
 
-@app.command()
-def create() -> None:
-    """Interactively create a new LLM exposure configuration."""
+@add_app.command("model")
+def add_model() -> None:
+    """Add a new model (LLM provider) configuration."""
     _print_banner()
-    console.print("\n[bold green]Welcome to llm-expose![/bold green]\n")
-    console.print("Let's set up a new LLM exposure. Answer the prompts below.\n")
+    console.print("\n[bold green]Add a new model configuration[/bold green]\n")
 
-    # ---- Exposure name ------------------------------------------------
-    name = Prompt.ask("[bold]Give this exposure a name[/bold]")
+    # ---- Model name ------------------------------------------------
+    name = Prompt.ask("[bold]Give this model a name[/bold]")
     name = name.strip()
     if not name:
         console.print("[red]Name cannot be empty.[/red]")
         raise typer.Exit(code=1)
 
+    # Check if model already exists
+    if name in list_models():
+        if not Confirm.ask(f"[yellow]Model '{name}' already exists. Overwrite?[/yellow]", default=False):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise typer.Exit()
+
     # ---- Provider type ------------------------------------------------
     provider_type = _select_from_list(
         "Select LLM provider type:",
-        ["Local (LM Studio / Ollama / vLLM / OpenAI-compatible)", "Online"],
+        ["Local (LM Studio / Ollama / vLLM / OpenAI-compatible)", "Online (LiteLLM-supported)"],
     )
 
     if provider_type.startswith("Online"):
         online_provider = _select_from_list(
             "Select online provider:",
-            ["openai", "anthropic", "google", "cohere", "mistral", "github_copilot", "other"],
+            list(models_by_provider.keys()),
         )
         if online_provider == "other":
-            online_provider = Prompt.ask("  Enter provider name (as recognised by LiteLLM)")
+            online_provider = Prompt.ask("  Enter provider name (as recognised by LiteLLM visit: https://models.litellm.ai/ for best compatibility)")
             model = Prompt.ask(f"  Model name for [cyan]{online_provider}[/cyan]")
         else:
             # Show available models for this provider
-            available_models = _MODELS_BY_PROVIDER.get(online_provider, ["other"])
+            available_models = list(models_by_provider[online_provider])
             selected_model = _select_from_list(
                 f"Select model for {online_provider}:",
                 available_models,
             )
             if selected_model == "other":
+                online_provider = Prompt.ask("  Enter provider name (as recognised by LiteLLM visit: https://models.litellm.ai/ for best compatibility)")
                 model = Prompt.ask(f"  Enter model name for [cyan]{online_provider}[/cyan]")
             else:
                 model = selected_model
@@ -203,305 +164,347 @@ def create() -> None:
 
     api_key: Optional[str] = None
     if provider_name != "local":
-        raw_key = Prompt.ask("  API key", password=True, default="")
+        auth_requirements = validate_environment(model)
+
+        if not auth_requirements["keys_in_environment"]:
+            while not api_key:
+                raw_key = Prompt.ask(f"  API key for {provider_name} (will be set as environment variable for this provider)")
+                api_key = raw_key.strip()
+                if not api_key:
+                    console.print("[red]  API key cannot be empty. Please try again.[/red]")
+    else:
+        # Ask for optional API key for local providers, since some self-hosted servers require it even if they ignore the value.
+        raw_key = Prompt.ask(f"  Optional API key for {provider_name} (some local servers require an API key even if they ignore the value)", default="")
         api_key = raw_key.strip() or None
-
-    temperature_raw = Prompt.ask("  Temperature", default="0.7")
-    try:
-        temperature = float(temperature_raw)
-    except ValueError:
-        console.print("[yellow]  Invalid temperature, using 0.7.[/yellow]")
-        temperature = 0.7
-
-    max_tokens_raw = Prompt.ask("  Max tokens", default="2048")
-    try:
-        max_tokens = int(max_tokens_raw)
-    except ValueError:
-        console.print("[yellow]  Invalid max_tokens, using 2048.[/yellow]")
-        max_tokens = 2048
 
     provider_cfg = ProviderConfig(
         provider_name=provider_name,
         model=model,
         api_key=api_key,
         base_url=base_url,
-        temperature=temperature,
-        max_tokens=max_tokens,
     )
 
-    # ---- Client -------------------------------------------------------
+    # ---- Save ---------------------------------------------------------
+    try:
+        saved_path = save_model(name, provider_cfg)
+    except Exception as exc:
+        console.print(f"[red]Failed to save model configuration: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"\n[bold green]✓ Model '{name}' saved successfully on {saved_path}![/bold green]\n"
+    )
+
+
+@add_app.command("channel")
+def add_channel() -> None:
+    """Add a new channel (messaging client) configuration."""
+    _print_banner()
+    console.print("\n[bold green]Add a new channel configuration[/bold green]\n")
+
+    # ---- Channel name ------------------------------------------------
+    name = Prompt.ask("[bold]Give this channel a name[/bold]")
+    name = name.strip()
+    if not name:
+        console.print("[red]Name cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    # Check if channel already exists
+    if name in list_channels():
+        if not Confirm.ask(f"[yellow]Channel '{name}' already exists. Overwrite?[/yellow]", default=False):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise typer.Exit()
+
+    # ---- Client type --------------------------------------------------
     _select_from_list(
         "Select messaging client:",
         ["Telegram"],
         # TODO: Add Discord, Slack once implemented
     )
+    
     bot_token = ""
     while not bot_token:
         raw_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])")
         bot_token = raw_token.strip()
         if not bot_token:
             console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+    
     client_cfg = TelegramClientConfig(bot_token=bot_token)
 
     # ---- Save ---------------------------------------------------------
-    config = ExposureConfig(name=name, provider=provider_cfg, client=client_cfg)
     try:
-        saved_path = save_config(config)
+        saved_path = save_channel(name, client_cfg)
     except Exception as exc:
-        console.print(f"[red]Failed to save configuration: {exc}[/red]")
+        console.print(f"[red]Failed to save channel configuration: {exc}[/red]")
         raise typer.Exit(code=1) from exc
 
     console.print(
-        f"\n[bold green]✓ Configuration '{name}' saved to {saved_path}[/bold green]\n"
+        f"\n[bold green]✓ Channel '{name}' saved successfully![/bold green]\n"
     )
 
-    # ---- Optionally start now -----------------------------------------
-    if Confirm.ask("Start the service now?"):
-        _start_service(config)
+
+# ---------------------------------------------------------------------------
+# DELETE Commands
+# ---------------------------------------------------------------------------
 
 
-@app.command("list")
-def list_command() -> None:
-    """List all saved exposure configurations."""
-    names = list_configs()
-    if not names:
-        console.print("[yellow]No configurations found. Run [bold]llm-expose create[/bold] to create one.[/yellow]")
+@delete_app.command("model")
+def delete_model_cmd(
+    name: Optional[str] = typer.Argument(None, help="Name of the model to delete"),
+) -> None:
+    """Delete a saved model configuration."""
+    models = list_models()
+    if not models:
+        console.print("[yellow]No models found. Run [bold]llm-expose add model[/bold] to create one.[/yellow]")
+        raise typer.Exit()
+
+    # Select model to delete
+    if name is None:
+        name = _select_from_list("Select model to delete:", models)
+    elif name not in models:
+        console.print(f"[red]No model named '{name}' found.[/red]")
+        console.print("Run [bold]llm-expose add model[/bold] to see available models.")
+        raise typer.Exit(code=1)
+    
+    # Confirm deletion
+    if not Confirm.ask(f"[bold red]Are you sure you want to delete model '{name}'?[/bold red]", default=False):
+        console.print("[yellow]Deletion cancelled.[/yellow]")
+        raise typer.Exit()
+
+    try:
+        delete_model(name)
+        console.print(f"\n[bold green]✓ Model '{name}' deleted successfully.[/bold green]\n")
+    except FileNotFoundError:
+        console.print(f"[red]No model named '{name}' found.[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Failed to delete model '{name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+
+@delete_app.command("channel")
+def delete_channel_cmd(
+    name: Optional[str] = typer.Argument(None, help="Name of the channel to delete"),
+) -> None:
+    """Delete a saved channel configuration."""
+    channels = list_channels()
+    if not channels:
+        console.print("[yellow]No channels found. Run [bold]llm-expose add channel[/bold] to create one.[/yellow]")
+        raise typer.Exit()
+
+    # Select channel to delete
+    if name is None:
+        name = _select_from_list("Select channel to delete:", channels)
+    elif name not in channels:
+        console.print(f"[red]No channel named '{name}' found.[/red]")
+        console.print("Run [bold]llm-expose add channel[/bold] to see available channels.")
+        raise typer.Exit(code=1)
+    
+    # Confirm deletion
+    if not Confirm.ask(f"[bold red]Are you sure you want to delete channel '{name}'?[/bold red]", default=False):
+        console.print("[yellow]Deletion cancelled.[/yellow]")
+        raise typer.Exit()
+
+    try:
+        delete_channel(name)
+        console.print(f"\n[bold green]✓ Channel '{name}' deleted successfully.[/bold green]\n")
+    except FileNotFoundError:
+        console.print(f"[red]No channel named '{name}' found.[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Failed to delete channel '{name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+
+# ---------------------------------------------------------------------------
+# LIST Command
+# ---------------------------------------------------------------------------
+
+
+@list_app.command("models")
+@list_app.command("model")
+def list_models_cmd() -> None:
+    """List all saved model configurations."""
+    models = list_models()
+    if not models:
+        console.print("[yellow]No models found. Run [bold]llm-expose add model[/bold] to create one.[/yellow]")
         return
 
-    table = Table(title="Saved Exposures", border_style="cyan", show_lines=True)
+    table = Table(title="Saved Models", border_style="cyan", show_lines=True)
     table.add_column("#", style="dim", width=4)
     table.add_column("Name", style="bold")
     table.add_column("Provider", style="green")
     table.add_column("Model", style="blue")
-    table.add_column("Client", style="magenta")
+    table.add_column("API Key", style="red")
 
-    for idx, name in enumerate(names, start=1):
+    for idx, name in enumerate(models, start=1):
         try:
-            cfg = load_config(name)
-            table.add_row(
-                str(idx),
-                cfg.name,
-                cfg.provider.provider_name,
-                cfg.provider.model,
-                cfg.client.client_type,
-            )
+            cfg = load_model(name)
+            api_key_offuscated = cfg.api_key[:4] + "****" if cfg.api_key else "-"
+            table.add_row(str(idx), name, cfg.provider_name, cfg.model, api_key_offuscated)
         except Exception:
             table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
 
     console.print(table)
 
 
-@app.command()
-def load(
-    name: str = typer.Argument(..., help="Name of the saved exposure to load"),
-) -> None:
-    """Load a saved configuration and start the service."""
-    try:
-        config = load_config(name)
-    except FileNotFoundError:
-        console.print(f"[red]No configuration named '{name}' found.[/red]")
-        console.print("Run [bold]llm-expose list[/bold] to see available configurations.")
-        raise typer.Exit(code=1)
-    except Exception as exc:
-        console.print(f"[red]Failed to load configuration '{name}': {exc}[/red]")
-        raise typer.Exit(code=1) from exc
+@list_app.command("channels")
+@list_app.command("channel")
+def list_channels_cmd() -> None:
+    """List all saved channel configurations."""
+    channels = list_channels()
+    if not channels:
+        console.print("[yellow]No channels found. Run [bold]llm-expose add channel[/bold] to create one.[/yellow]")
+        return
 
-    # Display summary
-    _print_config_summary(config)
+    table = Table(title="Saved Channels", border_style="cyan", show_lines=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Name", style="bold")
+    table.add_column("Type", style="magenta")
+    table.add_column("Bot Token", style="red")
 
-    if not Confirm.ask("\nStart the service?"):
-        raise typer.Exit()
-
-    _start_service(config)
-
-
-@app.command()
-def edit(
-    name: Optional[str] = typer.Argument(None, help="Name of the exposure to edit"),
-) -> None:
-    """Edit an existing exposure configuration."""
-    names = list_configs()
-    if not names:
-        console.print("[yellow]No configurations found. Run [bold]llm-expose create[/bold] to create one.[/yellow]")
-        raise typer.Exit()
-
-    # Select config to edit
-    if name is None:
-        name = _select_from_list("Select configuration to edit:", names)
-    
-    # Load existing config
-    try:
-        config = load_config(name)
-    except FileNotFoundError:
-        console.print(f"[red]No configuration named '{name}' found.[/red]")
-        raise typer.Exit(code=1)
-    except Exception as exc:
-        console.print(f"[red]Failed to load configuration '{name}': {exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    console.print(f"\n[bold cyan]Editing configuration: {name}[/bold cyan]")
-    console.print("[dim]Press Enter to keep current value, or type new value.[/dim]\n")
-
-    # ---- Exposure name ------------------------------------------------
-    new_name = Prompt.ask(
-        f"[bold]Exposure name[/bold]",
-        default=config.name,
-    ).strip()
-    if not new_name:
-        console.print("[red]Name cannot be empty.[/red]")
-        raise typer.Exit(code=1)
-
-    # ---- Provider settings --------------------------------------------
-    console.print("\n[bold]Provider Settings:[/bold]")
-    
-    provider_name = Prompt.ask(
-        "  Provider name",
-        default=config.provider.provider_name,
-    ).strip()
-
-    model = Prompt.ask(
-        "  Model name",
-        default=config.provider.model,
-    ).strip()
-
-    base_url_default = config.provider.base_url or ""
-    base_url_input = Prompt.ask(
-        "  Base URL (leave empty if not needed)",
-        default=base_url_default,
-    ).strip()
-    base_url = base_url_input if base_url_input else None
-
-    # API key (masked input)
-    if config.provider.api_key:
-        console.print("  [dim]Current API key is set (hidden)[/dim]")
-        change_api_key = Confirm.ask("  Change API key?", default=False)
-        if change_api_key:
-            new_api_key = Prompt.ask("  New API key", default="").strip()
-            api_key = new_api_key if new_api_key else None
-        else:
-            api_key = config.provider.api_key
-    else:
-        new_api_key = Prompt.ask("  API key (leave empty if not needed)", default="").strip()
-        api_key = new_api_key if new_api_key else None
-
-    temperature_str = Prompt.ask(
-        "  Temperature",
-        default=str(config.provider.temperature),
-    )
-    try:
-        temperature = float(temperature_str)
-    except ValueError:
-        console.print(f"[yellow]  Invalid temperature, keeping {config.provider.temperature}.[/yellow]")
-        temperature = config.provider.temperature
-
-    max_tokens_str = Prompt.ask(
-        "  Max tokens",
-        default=str(config.provider.max_tokens),
-    )
-    try:
-        max_tokens = int(max_tokens_str)
-    except ValueError:
-        console.print(f"[yellow]  Invalid max_tokens, keeping {config.provider.max_tokens}.[/yellow]")
-        max_tokens = config.provider.max_tokens
-
-    provider_cfg = ProviderConfig(
-        provider_name=provider_name,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-    # ---- Client settings ----------------------------------------------
-    console.print("\n[bold]Client Settings:[/bold]")
-    console.print("  [dim]Current bot token is set (hidden)[/dim]")
-    change_token = Confirm.ask("  Change bot token?", default=False)
-    
-    if change_token:
-        bot_token = ""
-        while not bot_token:
-            raw_token = Prompt.ask("  New Telegram bot token")
-            bot_token = raw_token.strip()
-            if not bot_token:
-                console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
-    else:
-        bot_token = config.client.bot_token
-
-    client_cfg = TelegramClientConfig(bot_token=bot_token)
-
-    # ---- Save ---------------------------------------------------------
-    updated_config = ExposureConfig(name=new_name, provider=provider_cfg, client=client_cfg)
-    
-    # If name changed, delete old config
-    if new_name != name:
+    for idx, name in enumerate(channels, start=1):
         try:
-            delete_config(name)
-        except Exception as exc:
-            console.print(f"[red]Failed to delete old configuration: {exc}[/red]")
-            raise typer.Exit(code=1) from exc
+            cfg = load_channel(name)
+            api_key_offuscated = cfg.bot_token[:4] + "****" if cfg.bot_token else "-"
+            table.add_row(str(idx), name, cfg.client_type, api_key_offuscated)
+        except Exception:
+            table.add_row(str(idx), name, "[red]error[/red]", "-")
 
-    try:
-        saved_path = save_config(updated_config)
-    except Exception as exc:
-        console.print(f"[red]Failed to save configuration: {exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    console.print(table)
 
-    console.print(
-        f"\n[bold green]✓ Configuration '{new_name}' updated successfully![/bold green]\n"
-    )
+
+# ---------------------------------------------------------------------------
+# START Command
+# ---------------------------------------------------------------------------
 
 
 @app.command()
-def delete(
-    name: Optional[str] = typer.Argument(None, help="Name of the exposure to delete"),
-) -> None:
-    """Delete a saved exposure configuration."""
-    names = list_configs()
-    if not names:
-        console.print("[yellow]No configurations found.[/yellow]")
-        raise typer.Exit()
+def start() -> None:
+    """Start the LLM exposure service by selecting a model and channel."""
+    _print_banner()
+    console.print("\n[bold green]Start LLM Exposure Service[/bold green]\n")
 
-    # Select config to delete
-    if name is None:
-        name = _select_from_list("Select configuration to delete:", names)
-    
-    # Confirm deletion
-    if not Confirm.ask(f"[bold red]Are you sure you want to delete '{name}'?[/bold red]", default=False):
-        console.print("[yellow]Deletion cancelled.[/yellow]")
-        raise typer.Exit()
+    # ---- Select model -------------------------------------------------
+    models = list_models()
+    if not models:
+        console.print("[red]No models found. Please run [bold]llm-expose add model[/bold] first.[/red]")
+        raise typer.Exit(code=1)
+
+    # Show available models in a table
+    model_table = Table(title="Available Models", border_style="cyan", show_lines=True)
+    model_table.add_column("#", style="dim", width=4)
+    model_table.add_column("Name", style="bold")
+    model_table.add_column("Provider", style="green")
+    model_table.add_column("Model", style="blue")
+    model_table.add_column("API Key", style="red")
+
+    for idx, name in enumerate(models, start=1):
+        try:
+            cfg = load_model(name)
+            api_key_offuscated = cfg.api_key[:4] + "****" if cfg.api_key else "-"
+            model_table.add_row(
+                str(idx),
+                name,
+                cfg.provider_name,
+                cfg.model,
+                api_key_offuscated
+            )
+        except Exception:
+            model_table.add_row(str(idx), name, "[red]error[/red]", "-")
+
+    console.print(model_table)
+    model_name = _select_from_list("Select a model:", models)
 
     try:
-        delete_config(name)
-        console.print(f"\n[bold green]✓ Configuration '{name}' deleted successfully.[/bold green]\n")
-    except FileNotFoundError:
-        console.print(f"[red]No configuration named '{name}' found.[/red]")
-        raise typer.Exit(code=1)
+        provider_cfg = load_model(model_name)
     except Exception as exc:
-        console.print(f"[red]Failed to delete configuration '{name}': {exc}[/red]")
+        console.print(f"[red]Failed to load model '{model_name}': {exc}[/red]")
         raise typer.Exit(code=1) from exc
+
+    # ---- Select channel -----------------------------------------------
+    channels = list_channels()
+    if not channels:
+        console.print("[red]No channels found. Please run [bold]llm-expose add channel[/bold] first.[/red]")
+        raise typer.Exit(code=1)
+
+    # Show available channels in a table
+    channel_table = Table(title="Available Channels", border_style="cyan", show_lines=True)
+    channel_table.add_column("#", style="dim", width=4)
+    channel_table.add_column("Name", style="bold")
+    channel_table.add_column("Type", style="magenta")
+    channel_table.add_column("Bot Token", style="red")
+
+    for idx, name in enumerate(channels, start=1):
+        try:
+            cfg = load_channel(name)
+            bot_token_offuscated = cfg.bot_token[:4] + "****" if cfg.bot_token else "-"
+            channel_table.add_row(
+                str(idx),
+                name,
+                cfg.client_type,
+                bot_token_offuscated
+            )
+        except Exception:
+            channel_table.add_row(str(idx), name, "[red]error[/red]", "-")
+
+    console.print("\n")
+    console.print(channel_table)
+    channel_name = _select_from_list("Select a channel:", channels)
+
+    try:
+        client_cfg = load_channel(channel_name)
+    except Exception as exc:
+        console.print(f"[red]Failed to load channel '{channel_name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    system_prompt = None
+    #  Ask for load a custom system prompt or use the default one
+    if Confirm.ask("\n[bold]Do you want to set a custom system prompt?[/bold]", default=False):
+        # Load promt from text file
+        while True:
+            prompt_path = Prompt.ask("  Enter path to system prompt text file")
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    system_prompt = f.read()
+                break
+            except Exception as exc:
+                console.print(f"[red]Failed to load system prompt from '{prompt_path}': {exc}[/red]")
+                if not Confirm.ask("Do you want to try again?", default=True):
+                    system_prompt = None
+                    break
+        
+        console.print(f"\n[green]Custom system prompt loaded successfully![/green]")
+
+    # ---- Display summary and confirm ----------------------------------
+    console.print("\n[bold cyan]Selected Configuration:[/bold cyan]")
+    summary_table = Table(border_style="cyan", show_header=False)
+    summary_table.add_column("Key", style="bold")
+    summary_table.add_column("Value")
+
+    summary_table.add_row("Model", model_name)
+    summary_table.add_row("Provider", provider_cfg.provider_name)
+    summary_table.add_row("Model ID", provider_cfg.model)
+    summary_table.add_row("Channel", channel_name)
+    summary_table.add_row("Client Type", client_cfg.client_type)
+    summary_table.add_row("System Prompt", system_prompt if system_prompt else "[dim]default[/dim]")
+    console.print(summary_table)
+
+    if not Confirm.ask("\n[bold]Start the service?[/bold]"):
+        console.print("[yellow]Cancelled.[/yellow]")
+        raise typer.Exit()
+
+    # ---- Build and start service --------------------------------------
+    # Create a temporary ExposureConfig for the orchestrator
+    exposure_name = f"{model_name}_{channel_name}"
+    config = ExposureConfig(name=exposure_name, provider=provider_cfg, client=client_cfg, system_prompt=system_prompt)
+    
+    _start_service(config)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _print_config_summary(config: ExposureConfig) -> None:
-    """Render a rich summary table for *config*."""
-    table = Table(title=f"Configuration: {config.name}", border_style="cyan", show_header=False)
-    table.add_column("Key", style="bold")
-    table.add_column("Value")
-
-    table.add_row("Provider", config.provider.provider_name)
-    table.add_row("Model", config.provider.model)
-    table.add_row("Temperature", str(config.provider.temperature))
-    table.add_row("Max tokens", str(config.provider.max_tokens))
-    if config.provider.base_url:
-        table.add_row("Base URL", config.provider.base_url)
-    table.add_row("Client", config.client.client_type)
-
-    console.print(table)
 
 
 def _start_service(config: ExposureConfig) -> None:

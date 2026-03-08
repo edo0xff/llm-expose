@@ -84,17 +84,11 @@ class TestCommonKwargs:
         kwargs = provider._common_kwargs()
         assert "base_url" not in kwargs
 
-    def test_temperature_and_max_tokens(self) -> None:
-        cfg = ProviderConfig(
-            provider_name="openai",
-            model="gpt-4o",
-            temperature=0.5,
-            max_tokens=512,
-        )
+    def test_model_included_in_common_kwargs(self) -> None:
+        cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
         provider = LiteLLMProvider(cfg)
         kwargs = provider._common_kwargs()
-        assert kwargs["temperature"] == 0.5
-        assert kwargs["max_tokens"] == 512
+        assert kwargs["model"] == "openai/gpt-4o"
 
 
 class TestComplete:

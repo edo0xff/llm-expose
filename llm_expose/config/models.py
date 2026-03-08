@@ -22,8 +22,6 @@ class ProviderConfig(BaseModel):
         default=None,
         description="Base URL for local or self-hosted models (e.g. LM Studio, Ollama proxy)",
     )
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
-    max_tokens: int = Field(default=2048, gt=0, description="Maximum tokens to generate")
 
     @field_validator("provider_name", "model")
     @classmethod
@@ -64,6 +62,10 @@ class ExposureConfig(BaseModel):
     name: str = Field(description="Unique name for this exposure configuration")
     provider: ProviderConfig = Field(description="LLM provider settings")
     client: TelegramClientConfig = Field(description="Messaging client settings")
+    system_prompt: Optional[str] = Field(
+        default=None,
+        description="Custom system prompt for this exposure. If not set, uses default prompt.",
+    )
 
     @field_validator("name")
     @classmethod

@@ -8,12 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from llm_expose.config.models import ExposureConfig, ProviderConfig, TelegramClientConfig
+from llm_expose.config.models import ProviderConfig, TelegramClientConfig
 from llm_expose.config.loader import (
-    delete_config,
-    list_configs,
-    load_config,
-    save_config,
+    delete_model,
+    delete_channel,
+    list_models,
+    list_channels,
+    load_model,
+    load_channel,
+    save_model,
+    save_channel,
 )
 
 
@@ -27,8 +31,6 @@ class TestProviderConfig:
         cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
         assert cfg.provider_name == "openai"
         assert cfg.model == "gpt-4o"
-        assert cfg.temperature == 0.7
-        assert cfg.max_tokens == 2048
         assert cfg.api_key is None
         assert cfg.base_url is None
 
@@ -48,20 +50,6 @@ class TestProviderConfig:
     def test_whitespace_only_provider_name_raises(self) -> None:
         with pytest.raises(Exception):
             ProviderConfig(provider_name="   ", model="gpt-4o")
-
-    def test_temperature_boundaries(self) -> None:
-        cfg_low = ProviderConfig(provider_name="openai", model="gpt-4o", temperature=0.0)
-        cfg_high = ProviderConfig(provider_name="openai", model="gpt-4o", temperature=2.0)
-        assert cfg_low.temperature == 0.0
-        assert cfg_high.temperature == 2.0
-
-    def test_temperature_out_of_range_raises(self) -> None:
-        with pytest.raises(Exception):
-            ProviderConfig(provider_name="openai", model="gpt-4o", temperature=3.0)
-
-    def test_max_tokens_must_be_positive(self) -> None:
-        with pytest.raises(Exception):
-            ProviderConfig(provider_name="openai", model="gpt-4o", max_tokens=0)
 
     def test_local_config_with_base_url(self) -> None:
         cfg = ProviderConfig(
@@ -91,99 +79,100 @@ class TestTelegramClientConfig:
             TelegramClientConfig(bot_token="   ")
 
 
-class TestExposureConfig:
-    def _make_config(self, name: str = "test") -> ExposureConfig:
-        return ExposureConfig(
-            name=name,
-            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
-        )
-
-    def test_valid_config(self) -> None:
-        cfg = self._make_config("my-exposure")
-        assert cfg.name == "my-exposure"
-
-    def test_name_strips_whitespace(self) -> None:
-        cfg = self._make_config("  hello  ")
-        assert cfg.name == "hello"
-
-    def test_empty_name_raises(self) -> None:
-        with pytest.raises(Exception):
-            self._make_config("")
-
-    def test_name_with_slash_raises(self) -> None:
-        with pytest.raises(Exception):
-            self._make_config("bad/name")
-
-    def test_name_with_backslash_raises(self) -> None:
-        with pytest.raises(Exception):
-            self._make_config("bad\\name")
-
-
 # ---------------------------------------------------------------------------
 # Loader tests
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def tmp_config_dir(tmp_path: Path) -> Path:
-    """Return a temporary directory for config storage."""
-    return tmp_path / "configs"
+class TestModelLoader:
+    """Tests for model (provider) configuration storage."""
 
+    def _make_provider(self) -> ProviderConfig:
+        return ProviderConfig(provider_name="openai", model="gpt-4o")
 
-class TestConfigLoader:
-    def _make_exposure(self, name: str = "test-exposure") -> ExposureConfig:
-        return ExposureConfig(
-            name=name,
-            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
-        )
-
-    def test_save_and_load_roundtrip(self, tmp_config_dir: Path) -> None:
-        cfg = self._make_exposure("my-bot")
-        saved_path = save_config(cfg, config_dir=tmp_config_dir)
+    def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = self._make_provider()
+        saved_path = save_model("my-model", cfg)
         assert saved_path.exists()
 
-        loaded = load_config("my-bot", config_dir=tmp_config_dir)
-        assert loaded.name == cfg.name
-        assert loaded.provider.provider_name == cfg.provider.provider_name
-        assert loaded.provider.model == cfg.provider.model
-        assert loaded.client.bot_token == cfg.client.bot_token
+        loaded = load_model("my-model")
+        assert loaded.provider_name == cfg.provider_name
+        assert loaded.model == cfg.model
 
-    def test_load_nonexistent_raises(self, tmp_config_dir: Path) -> None:
+    def test_load_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
-            load_config("does-not-exist", config_dir=tmp_config_dir)
+            load_model("does-not-exist")
 
-    def test_list_empty_dir(self, tmp_config_dir: Path) -> None:
-        result = list_configs(config_dir=tmp_config_dir)
+    def test_list_empty_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        result = list_models()
         assert result == []
 
-    def test_list_returns_all_names(self, tmp_config_dir: Path) -> None:
+    def test_list_returns_all_names(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = self._make_provider()
         for name in ("charlie", "alpha", "beta"):
-            save_config(self._make_exposure(name), config_dir=tmp_config_dir)
-        result = list_configs(config_dir=tmp_config_dir)
+            save_model(name, cfg)
+        result = list_models()
         assert result == ["alpha", "beta", "charlie"]  # sorted
 
-    def test_delete_config(self, tmp_config_dir: Path) -> None:
-        cfg = self._make_exposure("to-delete")
-        save_config(cfg, config_dir=tmp_config_dir)
-        delete_config("to-delete", config_dir=tmp_config_dir)
-        assert list_configs(config_dir=tmp_config_dir) == []
-
-    def test_delete_nonexistent_raises(self, tmp_config_dir: Path) -> None:
-        with pytest.raises(FileNotFoundError):
-            delete_config("ghost", config_dir=tmp_config_dir)
-
-    def test_get_config_dir_from_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from llm_expose.config.loader import get_config_dir
+    def test_delete_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
-        assert get_config_dir() == tmp_path
+        cfg = self._make_provider()
+        save_model("to-delete", cfg)
+        delete_model("to-delete")
+        assert list_models() == []
 
-    def test_saved_config_is_valid_yaml(self, tmp_config_dir: Path) -> None:
-        import yaml
-        cfg = self._make_exposure("yaml-check")
-        saved_path = save_config(cfg, config_dir=tmp_config_dir)
-        with saved_path.open() as fh:
-            data = yaml.safe_load(fh)
-        assert data["name"] == "yaml-check"
-        assert data["provider"]["provider_name"] == "openai"
+    def test_delete_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            delete_model("ghost")
+
+
+class TestChannelLoader:
+    """Tests for channel (client) configuration storage."""
+
+    def _make_client(self) -> TelegramClientConfig:
+        return TelegramClientConfig(bot_token="123:tok")
+
+    def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = self._make_client()
+        saved_path = save_channel("my-channel", cfg)
+        assert saved_path.exists()
+
+        loaded = load_channel("my-channel")
+        assert loaded.client_type == cfg.client_type
+        assert loaded.bot_token == cfg.bot_token
+
+    def test_load_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            load_channel("does-not-exist")
+
+    def test_list_empty_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        result = list_channels()
+        assert result == []
+
+    def test_list_returns_all_names(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = self._make_client()
+        for name in ("charlie", "alpha", "beta"):
+            save_channel(name, cfg)
+        result = list_channels()
+        assert result == ["alpha", "beta", "charlie"]  # sorted
+
+    def test_delete_channel(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = self._make_client()
+        save_channel("to-delete", cfg)
+        delete_channel("to-delete")
+        assert list_channels() == []
+
+    def test_delete_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            delete_channel("ghost")

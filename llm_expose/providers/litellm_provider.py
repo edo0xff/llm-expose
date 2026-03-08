@@ -28,10 +28,7 @@ class LiteLLMProvider(BaseProvider):
         self._config = config
         self._openai_client: AsyncOpenAI | None = None
         if config.api_key:
-            # LiteLLM reads API keys from environment variables.  Set the
-            # provider-specific variable so callers don't have to manage it.
-            env_key = f"{config.provider_name.upper()}_API_KEY"
-            os.environ.setdefault(env_key, config.api_key)
+            litellm.api_key = config.api_key
         if self._is_local_provider():
             # Most local OpenAI-compatible servers ignore API keys, but the
             # SDK expects one; use a harmless default when omitted.
@@ -52,29 +49,10 @@ class LiteLLMProvider(BaseProvider):
             return model.split("/", 1)[1]
         return model
 
-    def _build_model_id(self) -> str:
-        """Return the fully-qualified model identifier expected by LiteLLM.
-
-        For *local* providers the caller is expected to pass an already-qualified
-        string such as ``openai/llama3``; for well-known online providers the
-        ``provider_name/model`` form is used.
-        """
-        name = self._config.provider_name.lower()
-        model = self._config.model
-        if name == "local":
-            # Local providers are handled by the OpenAI SDK path.
-            return self._local_model_id()
-        # If model already contains a slash it is already qualified.
-        if "/" in model:
-            return model
-        return f"{name}/{model}"
-
     def _common_kwargs(self) -> dict:
         """Build the kwargs shared by both sync and streaming calls."""
         kwargs: dict = {
-            "model": self._build_model_id(),
-            "temperature": self._config.temperature,
-            "max_tokens": self._config.max_tokens,
+            "model": self._config.model,
         }
         if self._config.base_url:
             kwargs["base_url"] = self._config.base_url
@@ -99,8 +77,6 @@ class LiteLLMProvider(BaseProvider):
             response = await self._openai_client.chat.completions.create(
                 model=self._local_model_id(),
                 messages=messages,
-                temperature=self._config.temperature,
-                max_tokens=self._config.max_tokens,
             )
             return response.choices[0].message.content or ""
 
@@ -124,8 +100,6 @@ class LiteLLMProvider(BaseProvider):
             response = await self._openai_client.chat.completions.create(
                 model=self._local_model_id(),
                 messages=messages,
-                temperature=self._config.temperature,
-                max_tokens=self._config.max_tokens,
                 stream=True,
             )
             async for chunk in response:

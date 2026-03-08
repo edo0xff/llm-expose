@@ -5,8 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, Coroutine, Any
 
-# Type alias: an async function that accepts a user message and returns a reply.
-MessageHandler = Callable[[str], Coroutine[Any, Any, str]]
+# Type alias: an async function that accepts a channel ID and user message, and returns a reply.
+MessageHandler = Callable[[str, str], Coroutine[Any, Any, str]]
 
 
 class BaseClient(ABC):

@@ -19,8 +19,10 @@ _DEFAULT_SYSTEM_PROMPT = (
 class Orchestrator:
     """Connects an LLM *provider* to a messaging *client*.
 
-    The orchestrator maintains per-session conversation history so that the
-    LLM retains context across multiple turns in a single chat session.
+    The orchestrator maintains per-channel conversation history so that the
+    LLM retains context across multiple turns in a single chat session. Each
+    channel can have its own system prompt to provide context about the
+    communication channel being used.
 
     Args:
         config: The :class:`~llm_expose.config.models.ExposureConfig` that
@@ -38,27 +40,50 @@ class Orchestrator:
         self._config = config
         self._provider = provider
         self._client = client
-        # Simple in-memory conversation history (resets on restart).
-        self._history: list[dict[str, str]] = [
-            {"role": "system", "content": _DEFAULT_SYSTEM_PROMPT}
-        ]
+        # Per-channel conversation histories (keyed by channel ID).
+        # Each channel gets its own history with the configured system prompt.
+        self._histories: dict[str, list[dict[str, str]]] = {}
+        # Use custom system prompt from config, or fall back to default
+        self._system_prompt = config.system_prompt or _DEFAULT_SYSTEM_PROMPT
 
-    async def _handle_message(self, user_message: str) -> str:
-        """Process a single user message and return the LLM's reply.
-
-        Appends the user message to the history, calls the provider, then
-        appends the assistant's reply and returns it.
+    def _get_or_create_history(self, channel_id: str) -> list[dict[str, str]]:
+        """Get the conversation history for a channel, creating it if needed.
 
         Args:
+            channel_id: Unique identifier for the channel/chat.
+
+        Returns:
+            The conversation history list for this channel.
+        """
+        if channel_id not in self._histories:
+            logger.debug("Creating new conversation history for channel %s", channel_id)
+            self._histories[channel_id] = [
+                {"role": "system", "content": self._system_prompt}
+            ]
+        return self._histories[channel_id]
+
+    async def _handle_message(self, channel_id: str, user_message: str) -> str:
+        """Process a single user message and return the LLM's reply.
+
+        Appends the user message to the channel's history, calls the provider,
+        then appends the assistant's reply and returns it.
+
+        Args:
+            channel_id: Unique identifier for the channel/chat.
             user_message: Raw text from the end user.
 
         Returns:
             The LLM's reply as a plain string.
         """
-        self._history.append({"role": "user", "content": user_message})
-        logger.debug("Sending %d messages to provider", len(self._history))
-        reply = await self._provider.complete(self._history)
-        self._history.append({"role": "assistant", "content": reply})
+        history = self._get_or_create_history(channel_id)
+        history.append({"role": "user", "content": user_message})
+        logger.debug(
+            "Sending %d messages to provider for channel %s",
+            len(history),
+            channel_id,
+        )
+        reply = await self._provider.complete(history)
+        history.append({"role": "assistant", "content": reply})
         return reply
 
     async def run(self) -> None:

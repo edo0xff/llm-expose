@@ -53,7 +53,12 @@ class TelegramClient(BaseClient):
             return
 
         user_text = update.message.text
-        logger.info("Received message from user %s", update.effective_user)
+        chat_id = str(update.message.chat.id)
+        logger.info(
+            "Received message from user %s in chat %s",
+            update.effective_user,
+            chat_id,
+        )
 
         # Show a typing action while waiting for the LLM
         if update.message.chat:
@@ -62,12 +67,12 @@ class TelegramClient(BaseClient):
             )
 
         try:
-            reply = await self._handler(user_text)
+            reply = await self._handler(chat_id, user_text)
         except Exception as exc:
             logger.exception("Error from LLM handler: %s", exc)
             reply = "⚠️ Sorry, I encountered an error. Please try again."
 
-        await update.message.reply_text(reply)
+        await update.message.reply_text(reply, parse_mode="Markdown")
 
     # ------------------------------------------------------------------
     # Lifecycle
