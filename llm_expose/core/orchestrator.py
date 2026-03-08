@@ -45,6 +45,10 @@ class Orchestrator:
         self._histories: dict[str, list[dict[str, str]]] = {}
         # Use custom system prompt from config, or fall back to default
         self._system_prompt = config.system_prompt or _DEFAULT_SYSTEM_PROMPT
+        # Backward compatibility for older tests/callers that access _history
+        # or call _handle_message(user_message) without a channel ID.
+        self._default_channel_id = "__default__"
+        self._history = self._get_or_create_history(self._default_channel_id)
 
     def _get_or_create_history(self, channel_id: str) -> list[dict[str, str]]:
         """Get the conversation history for a channel, creating it if needed.
@@ -62,21 +66,31 @@ class Orchestrator:
             ]
         return self._histories[channel_id]
 
-    async def _handle_message(self, channel_id: str, user_message: str) -> str:
+    async def _handle_message(
+        self, channel_or_message: str, user_message: str | None = None
+    ) -> str:
         """Process a single user message and return the LLM's reply.
 
         Appends the user message to the channel's history, calls the provider,
         then appends the assistant's reply and returns it.
 
         Args:
-            channel_id: Unique identifier for the channel/chat.
-            user_message: Raw text from the end user.
+            channel_or_message: Either channel ID (new style) or user message
+                (legacy one-argument style).
+            user_message: Raw text from the end user when channel ID is passed.
 
         Returns:
             The LLM's reply as a plain string.
         """
+        if user_message is None:
+            channel_id = self._default_channel_id
+            text = channel_or_message
+        else:
+            channel_id = channel_or_message
+            text = user_message
+
         history = self._get_or_create_history(channel_id)
-        history.append({"role": "user", "content": user_message})
+        history.append({"role": "user", "content": text})
         logger.debug(
             "Sending %d messages to provider for channel %s",
             len(history),

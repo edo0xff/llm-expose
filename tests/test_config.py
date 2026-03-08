@@ -8,16 +8,27 @@ from pathlib import Path
 
 import pytest
 
-from llm_expose.config.models import ProviderConfig, TelegramClientConfig
+from llm_expose.config.models import (
+    MCPServerConfig,
+    MCPSettingsConfig,
+    ProviderConfig,
+    TelegramClientConfig,
+)
 from llm_expose.config.loader import (
     delete_model,
     delete_channel,
+    delete_mcp_server,
+    get_mcp_server,
     list_models,
     list_channels,
+    list_mcp_servers,
     load_model,
     load_channel,
+    load_mcp_settings,
     save_model,
     save_channel,
+    save_mcp_server,
+    save_mcp_settings,
 )
 
 
@@ -77,6 +88,24 @@ class TestTelegramClientConfig:
     def test_whitespace_only_token_raises(self) -> None:
         with pytest.raises(Exception):
             TelegramClientConfig(bot_token="   ")
+
+
+class TestMCPConfig:
+    def test_valid_stdio_server(self) -> None:
+        cfg = MCPServerConfig(name="filesystem", transport="stdio", command="npx")
+        assert cfg.name == "filesystem"
+        assert cfg.transport == "stdio"
+        assert cfg.command == "npx"
+
+    def test_valid_sse_server(self) -> None:
+        cfg = MCPServerConfig(name="remote", transport="sse", url="http://localhost:3000/sse")
+        assert cfg.transport == "sse"
+        assert cfg.url == "http://localhost:3000/sse"
+
+    def test_settings_defaults(self) -> None:
+        settings = MCPSettingsConfig()
+        assert settings.confirmation_mode == "optional"
+        assert settings.tool_timeout_seconds == 30
 
 
 # ---------------------------------------------------------------------------
@@ -176,3 +205,41 @@ class TestChannelLoader:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             delete_channel("ghost")
+
+
+class TestMCPLoader:
+    def test_save_and_list_servers(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
+        save_mcp_server(MCPServerConfig(name="db", transport="sse", url="http://localhost:3000/sse"))
+        assert list_mcp_servers() == ["db", "web"]
+
+    def test_get_server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
+        server = get_mcp_server("web")
+        assert server.command == "npx"
+
+    def test_delete_server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
+        delete_mcp_server("web")
+        assert list_mcp_servers() == []
+
+    def test_delete_nonexistent_server_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        with pytest.raises(FileNotFoundError):
+            delete_mcp_server("ghost")
+
+    def test_load_default_mcp_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        settings = load_mcp_settings()
+        assert settings.confirmation_mode == "optional"
+        assert settings.tool_timeout_seconds == 30
+
+    def test_save_mcp_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_settings(MCPSettingsConfig(confirmation_mode="required", tool_timeout_seconds=45))
+        settings = load_mcp_settings()
+        assert settings.confirmation_mode == "required"
+        assert settings.tool_timeout_seconds == 45

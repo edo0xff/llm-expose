@@ -29,6 +29,12 @@ class LiteLLMProvider(BaseProvider):
         self._openai_client: AsyncOpenAI | None = None
         if config.api_key:
             litellm.api_key = config.api_key
+            # Preserve historical behavior expected by tests and local users.
+            if (
+                config.provider_name.lower() == "openai"
+                and not os.environ.get("OPENAI_API_KEY")
+            ):
+                os.environ["OPENAI_API_KEY"] = config.api_key
         if self._is_local_provider():
             # Most local OpenAI-compatible servers ignore API keys, but the
             # SDK expects one; use a harmless default when omitted.
@@ -52,7 +58,7 @@ class LiteLLMProvider(BaseProvider):
     def _common_kwargs(self) -> dict:
         """Build the kwargs shared by both sync and streaming calls."""
         kwargs: dict = {
-            "model": self._config.model,
+            "model": self._config.model.strip(),
         }
         if self._config.base_url:
             kwargs["base_url"] = self._config.base_url

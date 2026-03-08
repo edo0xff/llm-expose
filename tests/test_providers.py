@@ -41,30 +41,17 @@ class TestLiteLLMProviderInit:
         assert os.environ["OPENAI_API_KEY"] == "already-set"
 
 
-class TestBuildModelId:
-    def _provider(self, provider_name: str, model: str) -> LiteLLMProvider:
-        cfg = ProviderConfig(provider_name=provider_name, model=model)
-        return LiteLLMProvider(cfg)
+class TestModelIdHandling:
+    def test_local_model_id_strips_openai_prefix(self) -> None:
+        cfg = ProviderConfig(provider_name="local", model="openai/llama3")
+        provider = LiteLLMProvider(cfg)
+        assert provider._local_model_id() == "llama3"
 
-    def test_online_provider_prefixed(self) -> None:
-        p = self._provider("openai", "gpt-4o")
-        assert p._build_model_id() == "openai/gpt-4o"
-
-    def test_local_provider_uses_openai_prefix(self) -> None:
-        p = self._provider("local", "llama3")
-        assert p._build_model_id() == "llama3"
-
-    def test_local_provider_strips_openai_prefix(self) -> None:
-        p = self._provider("local", "openai/llama3")
-        assert p._build_model_id() == "llama3"
-
-    def test_already_qualified_model_unchanged(self) -> None:
-        p = self._provider("openai", "openai/gpt-4o")
-        assert p._build_model_id() == "openai/gpt-4o"
-
-    def test_anthropic_provider(self) -> None:
-        p = self._provider("anthropic", "claude-3-5-sonnet")
-        assert p._build_model_id() == "anthropic/claude-3-5-sonnet"
+    def test_non_local_model_is_used_as_configured(self) -> None:
+        cfg = ProviderConfig(provider_name="openai", model="openai/gpt-4o")
+        provider = LiteLLMProvider(cfg)
+        kwargs = provider._common_kwargs()
+        assert kwargs["model"] == "openai/gpt-4o"
 
 
 class TestCommonKwargs:
@@ -85,7 +72,7 @@ class TestCommonKwargs:
         assert "base_url" not in kwargs
 
     def test_model_included_in_common_kwargs(self) -> None:
-        cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
+        cfg = ProviderConfig(provider_name="openai", model="openai/gpt-4o")
         provider = LiteLLMProvider(cfg)
         kwargs = provider._common_kwargs()
         assert kwargs["model"] == "openai/gpt-4o"

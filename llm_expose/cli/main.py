@@ -19,15 +19,23 @@ from telegram.error import Conflict
 from litellm import validate_environment, models_by_provider
 
 from llm_expose.config import (
+    MCPServerConfig,
+    MCPSettingsConfig,
     ProviderConfig,
     TelegramClientConfig,
     delete_channel,
+    delete_mcp_server,
     delete_model,
+    get_mcp_server,
     list_channels,
+    list_mcp_servers,
     list_models,
     load_channel,
+    load_mcp_settings,
     load_model,
     save_channel,
+    save_mcp_server,
+    save_mcp_settings,
     save_model,
 )
 from llm_expose.config.models import ExposureConfig
@@ -50,10 +58,12 @@ app = typer.Typer(
 add_app = typer.Typer(help="Add model or channel configurations")
 delete_app = typer.Typer(help="Delete model or channel configurations")
 list_app = typer.Typer(help="List saved models or channels")
+mcp_app = typer.Typer(help="Manage MCP server integrations and settings")
 
 app.add_typer(add_app, name="add")
 app.add_typer(delete_app, name="delete")
 app.add_typer(list_app, name="list")
+app.add_typer(mcp_app, name="mcp")
 
 console = Console()
 
@@ -62,12 +72,20 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 _BANNER = r"""
- _     _     __  __   _____                           
-| |   | |   |  \/  | | ____|_  ___ __   ___  ___  ___ 
-| |   | |   | |\/| | |  _| \ \/ / '_ \ / _ \/ __|/ _ \
-| |___| |___| |  | | | |___ >  <| |_) | (_) \__ \  __/
-|_____|_____|_|  |_| |_____/_/\_\ .__/ \___/|___/\___|
-                                |_|                                    
+   |\---/|
+   | ,_, |
+    \_`_/-..----.
+ ___/ `   ' ,""+ \ 
+(__...'   __\    |`.___.';
+  (_,...'(_,.`__)/'.....+                        
+╦  ╦  ╔╦╗  ╔═╗─┐ ┬┌─┐┌─┐┌─┐┌─┐
+║  ║  ║║║  ║╣ ┌┴┬┘├─┘│ │└─┐├┤ 
+╩═╝╩═╝╩ ╩  ╚═╝┴ └─┴  └─┘└─┘└─┘
+
+> LLM's at your service, wherever you chat.
+> v0.1-alpha
+> 100+ models supported via LiteLLM and local OpenAI-compatible servers.
+> MCP support for advanced tool integration and control.
 """
 
 # ---------------------------------------------------------------------------
@@ -76,7 +94,7 @@ _BANNER = r"""
 
 def _print_banner() -> None:
     """Display the welcome banner."""
-    console.print(Panel(Text(_BANNER, style="bold cyan", justify="center"), border_style="cyan"))
+    console.print(Panel(Text(_BANNER, style="bold cyan"), border_style="cyan"))
 
 
 def _select_from_list(prompt: str, options: list[str]) -> str:
@@ -375,6 +393,189 @@ def list_channels_cmd() -> None:
 
 
 # ---------------------------------------------------------------------------
+# MCP Commands
+# ---------------------------------------------------------------------------
+
+
+@mcp_app.command("list")
+def list_mcp_cmd() -> None:
+    """List all configured MCP servers and global MCP settings."""
+    settings = load_mcp_settings()
+    servers = list_mcp_servers()
+
+    console.print("\n[bold cyan]MCP Settings[/bold cyan]")
+    settings_table = Table(border_style="cyan", show_header=False)
+    settings_table.add_column("Key", style="bold")
+    settings_table.add_column("Value")
+    settings_table.add_row("confirmation_mode", settings.confirmation_mode)
+    settings_table.add_row("tool_timeout_seconds", str(settings.tool_timeout_seconds))
+    console.print(settings_table)
+
+    if not servers:
+        console.print(
+            "\n[yellow]No MCP servers configured. Use [bold]llm-expose mcp add[/bold] to add one.[/yellow]"
+        )
+        return
+
+    table = Table(title="Configured MCP Servers", border_style="cyan", show_lines=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Name", style="bold")
+    table.add_column("Transport", style="green")
+    table.add_column("Target", style="blue")
+    table.add_column("Enabled", style="magenta")
+
+    for idx, name in enumerate(servers, start=1):
+        try:
+            server = get_mcp_server(name)
+            target = server.command if server.transport == "stdio" else server.url
+            table.add_row(
+                str(idx),
+                server.name,
+                server.transport,
+                target or "-",
+                "yes" if server.enabled else "no",
+            )
+        except Exception:
+            table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
+
+    console.print("\n")
+    console.print(table)
+
+
+@mcp_app.command("add")
+def add_mcp_cmd() -> None:
+    """Add or update an MCP server configuration."""
+    _print_banner()
+    console.print("\n[bold green]Add an MCP server configuration[/bold green]\n")
+
+    name = Prompt.ask("[bold]MCP server name[/bold]").strip()
+    if not name:
+        console.print("[red]Name cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    existing_servers = list_mcp_servers()
+    if name in existing_servers:
+        if not Confirm.ask(
+            f"[yellow]MCP server '{name}' already exists. Overwrite?[/yellow]",
+            default=False,
+        ):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise typer.Exit()
+
+    transport = _select_from_list("Select MCP transport:", ["stdio", "sse"])
+    command: Optional[str] = None
+    args: list[str] = []
+    url: Optional[str] = None
+
+    if transport == "stdio":
+        command = Prompt.ask("  Command to run (example: npx, uvx)").strip()
+        if not command:
+            console.print("[red]Command cannot be empty for stdio transport.[/red]")
+            raise typer.Exit(code=1)
+        raw_args = Prompt.ask("  Command args (space-separated)", default="").strip()
+        args = raw_args.split() if raw_args else []
+    else:
+        url = Prompt.ask("  SSE URL (example: http://localhost:3000/sse)").strip()
+        if not url:
+            console.print("[red]URL cannot be empty for SSE transport.[/red]")
+            raise typer.Exit(code=1)
+
+    enabled = Confirm.ask("  Enable this MCP server now?", default=True)
+
+    server = MCPServerConfig(
+        name=name,
+        transport=transport,
+        command=command,
+        args=args,
+        url=url,
+        enabled=enabled,
+    )
+
+    try:
+        path = save_mcp_server(server)
+    except Exception as exc:
+        console.print(f"[red]Failed to save MCP server configuration: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"\n[bold green]✓ MCP server '{name}' saved successfully in {path}![/bold green]\n"
+    )
+
+
+@mcp_app.command("delete")
+def delete_mcp_cmd(
+    name: Optional[str] = typer.Argument(None, help="Name of the MCP server to delete"),
+) -> None:
+    """Delete a configured MCP server."""
+    servers = list_mcp_servers()
+    if not servers:
+        console.print(
+            "[yellow]No MCP servers found. Run [bold]llm-expose mcp add[/bold] to create one.[/yellow]"
+        )
+        raise typer.Exit()
+
+    if name is None:
+        name = _select_from_list("Select MCP server to delete:", servers)
+    elif name not in servers:
+        console.print(f"[red]No MCP server named '{name}' found.[/red]")
+        raise typer.Exit(code=1)
+
+    if not Confirm.ask(
+        f"[bold red]Are you sure you want to delete MCP server '{name}'?[/bold red]",
+        default=False,
+    ):
+        console.print("[yellow]Deletion cancelled.[/yellow]")
+        raise typer.Exit()
+
+    try:
+        delete_mcp_server(name)
+    except FileNotFoundError:
+        console.print(f"[red]No MCP server named '{name}' found.[/red]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Failed to delete MCP server '{name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(f"\n[bold green]✓ MCP server '{name}' deleted successfully.[/bold green]\n")
+
+
+@mcp_app.command("mode")
+def mcp_mode_cmd(
+    mode: Optional[str] = typer.Argument(
+        None,
+        help="Confirmation mode for tool calls: required or optional",
+    ),
+) -> None:
+    """Show or set MCP confirmation mode.
+
+    Examples:
+        llm-expose mcp mode
+        llm-expose mcp mode optional
+        llm-expose mcp mode required
+    """
+    settings = load_mcp_settings()
+    if mode is None:
+        console.print(
+            f"[bold cyan]Current MCP confirmation mode:[/bold cyan] {settings.confirmation_mode}"
+        )
+        return
+
+    normalized = mode.strip().lower()
+    if normalized not in {"required", "optional"}:
+        console.print("[red]Invalid mode. Use 'required' or 'optional'.[/red]")
+        raise typer.Exit(code=1)
+
+    updated_settings = MCPSettingsConfig(
+        confirmation_mode=normalized,
+        tool_timeout_seconds=settings.tool_timeout_seconds,
+    )
+    save_mcp_settings(updated_settings)
+    console.print(
+        f"[bold green]✓ MCP confirmation mode updated to '{normalized}'.[/bold green]"
+    )
+
+
+# ---------------------------------------------------------------------------
 # START Command
 # ---------------------------------------------------------------------------
 
@@ -540,7 +741,7 @@ def _start_service(config: ExposureConfig) -> None:
         console.print("\n[yellow]Service stopped by user.[/yellow]")
 
 
-async def _placeholder_handler(message: str) -> str:  # pragma: no cover
+async def _placeholder_handler(channel_id: str, message: str) -> str:  # pragma: no cover
     """Placeholder; the orchestrator replaces this before the first call."""
     return message
 

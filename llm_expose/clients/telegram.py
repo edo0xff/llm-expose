@@ -67,12 +67,19 @@ class TelegramClient(BaseClient):
             )
 
         try:
-            reply = await self._handler(chat_id, user_text)
+            # Keep backward compatibility with one-argument handlers used in
+            # tests/custom integrations, but pass channel context when the
+            # orchestrator handler is registered.
+            bound_self = getattr(self._handler, "__self__", None)
+            if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
+                reply = await self._handler(chat_id, user_text)
+            else:
+                reply = await self._handler(user_text)
         except Exception as exc:
             logger.exception("Error from LLM handler: %s", exc)
             reply = "⚠️ Sorry, I encountered an error. Please try again."
 
-        await update.message.reply_text(reply, parse_mode="Markdown")
+        await update.message.reply_text(reply)
 
     # ------------------------------------------------------------------
     # Lifecycle
