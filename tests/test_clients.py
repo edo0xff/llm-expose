@@ -6,8 +6,9 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.error import BadRequest
 
-from llm_expose.clients.base import BaseClient
+from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.clients.telegram import TelegramClient
 from llm_expose.config.models import (
     ExposureConfig,
@@ -98,7 +99,35 @@ class TestTelegramClientHandlers:
         await client._handle_message(update, context)
 
         handler.assert_awaited_once_with("What is 2+2?")
-        update.message.reply_text.assert_called_once_with("LLM reply")
+        update.message.reply_text.assert_called_once_with(
+            "LLM reply", parse_mode="Markdown"
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_message_retries_plain_text_on_markdown_parse_error(self) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+        handler = AsyncMock(return_value="broken *markdown")
+        client = TelegramClient(cfg, handler=handler)
+
+        update = self._make_update("format this")
+        update.message.reply_text = AsyncMock(
+            side_effect=[
+                BadRequest("Can't parse entities: can't find end of the entity"),
+                None,
+            ]
+        )
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+
+        await client._handle_message(update, context)
+
+        assert update.message.reply_text.await_count == 2
+        first_call = update.message.reply_text.await_args_list[0]
+        second_call = update.message.reply_text.await_args_list[1]
+        assert first_call.args == ("broken *markdown",)
+        assert first_call.kwargs == {"parse_mode": "Markdown"}
+        assert second_call.args == ("broken *markdown",)
+        assert second_call.kwargs == {}
 
     @pytest.mark.asyncio
     async def test_handle_message_returns_error_on_exception(self) -> None:
@@ -376,7 +405,8 @@ class TestOrchestrator:
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         reply = await orch._handle_message("Hello")
-        assert "requires confirmation" in reply
+        assert isinstance(reply, MessageResponse)
+        assert "requires confirmation" in reply.content
         provider.complete.assert_not_awaited()
         fake_runtime.execute_tool_call.assert_not_awaited()
 
@@ -451,8 +481,10 @@ class TestOrchestrator:
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         prompt = await orch._handle_message("42", "Use MCP")
-        assert "requires confirmation" in prompt
-        approval_id = prompt.split("id: ")[1].split(")")[0]
+        assert isinstance(prompt, MessageResponse)
+        assert "requires confirmation" in prompt.content
+        assert prompt.approval_id
+        approval_id = prompt.approval_id
 
         final = await orch._handle_message("42", f"approve {approval_id}")
         assert final == "approved final"
@@ -526,7 +558,9 @@ class TestOrchestrator:
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         prompt = await orch._handle_message("42", "Use MCP")
-        approval_id = prompt.split("id: ")[1].split(")")[0]
+        assert isinstance(prompt, MessageResponse)
+        assert prompt.approval_id
+        approval_id = prompt.approval_id
 
         final = await orch._handle_message("42", f"reject {approval_id}")
         assert final == "rejection handled"

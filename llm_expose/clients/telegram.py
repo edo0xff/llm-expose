@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -19,6 +20,7 @@ from llm_expose.clients.base import BaseClient, MessageHandler as LLMHandler, Me
 from llm_expose.config.models import TelegramClientConfig
 
 logger = logging.getLogger(__name__)
+MARKDOWN_PARSE_MODE = "Markdown"
 
 
 class TelegramClient(BaseClient):
@@ -42,6 +44,44 @@ class TelegramClient(BaseClient):
     # ------------------------------------------------------------------
     # Telegram update handlers
     # ------------------------------------------------------------------
+
+    async def _reply_text_safe(self, message, text: str, **kwargs) -> None:
+        """Send a reply using Markdown; retry as plain text on parse errors."""
+        try:
+            await message.reply_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
+        except BadRequest as exc:
+            if "Can't parse entities" not in str(exc):
+                raise
+            logger.warning("Markdown parse failed in reply_text, retrying plain text: %s", exc)
+            await message.reply_text(text, **kwargs)
+
+    async def _edit_message_text_safe(self, query, text: str, **kwargs) -> None:
+        """Edit a message using Markdown; retry as plain text on parse errors."""
+        try:
+            await query.edit_message_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
+        except BadRequest as exc:
+            if "Can't parse entities" not in str(exc):
+                raise
+            logger.warning(
+                "Markdown parse failed in edit_message_text, retrying plain text: %s",
+                exc,
+            )
+            await query.edit_message_text(text, **kwargs)
+
+    async def _send_message_safe(self, bot, chat_id: str, text: str, **kwargs) -> None:
+        """Send a message using Markdown; retry as plain text on parse errors."""
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=MARKDOWN_PARSE_MODE,
+                **kwargs,
+            )
+        except BadRequest as exc:
+            if "Can't parse entities" not in str(exc):
+                raise
+            logger.warning("Markdown parse failed in send_message, retrying plain text: %s", exc)
+            await bot.send_message(chat_id=chat_id, text=text, **kwargs)
 
     async def _handle_start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -103,13 +143,20 @@ class TelegramClient(BaseClient):
                     ]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text(reply.content, reply_markup=reply_markup)
+                await self._reply_text_safe(
+                    update.message,
+                    reply.content,
+                    reply_markup=reply_markup,
+                )
             else:
                 # No approval needed, just send the content
-                await update.message.reply_text(reply.content)
+                await self._reply_text_safe(
+                    update.message,
+                    reply.content,
+                )
         else:
             # Plain string response (backward compatibility)
-            await update.message.reply_text(reply)
+            await self._reply_text_safe(update.message, reply)
 
     async def _handle_callback_query(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -163,15 +210,18 @@ class TelegramClient(BaseClient):
 
         # Edit the original message to show the decision and result
         decision_emoji = "✅" if decision == "approve" else "❌"
-        status_message = f"{decision_emoji} {decision.capitalize()}d\n\n{reply_text}"
+        status_message = f"{decision_emoji} Tool execution: {decision}d\n\n{reply_text}"
         
         if query.message:
             try:
-                await query.edit_message_text(status_message)
+                await self._edit_message_text_safe(
+                    query,
+                    status_message,
+                )
             except Exception as exc:
                 # If editing fails (e.g., message too old), send a new message
                 logger.warning("Could not edit message: %s", exc)
-                await context.bot.send_message(chat_id=chat_id, text=status_message)
+                await self._send_message_safe(context.bot, chat_id, status_message)
 
     # ------------------------------------------------------------------
     # Lifecycle
