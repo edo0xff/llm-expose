@@ -252,6 +252,59 @@ class TelegramClient(BaseClient):
         # Keep running until stop() signals shutdown.
         await self._stop_event.wait()
 
+    async def send_message(self, user_id: str, text: str) -> dict:
+        """Send a direct message to a specific user.
+
+        Uses the Markdown parsing with fallback to plain text on parse errors,
+        consistent with reply and edit methods.
+
+        Args:
+            user_id: Telegram chat_id as string.
+            text: Message text to send.
+
+        Returns:
+            Dict with keys: message_id, timestamp, status, user_id.
+
+        Raises:
+            RuntimeError: If the Telegram app cannot be initialized.
+            BadRequest: If send fails (invalid chat_id, permissions, etc.).
+        """
+        from datetime import datetime as dt
+
+        # Initialize the app if not already done
+        if self._app is None:
+            self._app = Application.builder().token(self._config.bot_token).build()
+            await self._app.initialize()
+
+        try:
+            # Try to send with Markdown formatting first
+            try:
+                message = await self._app.bot.send_message(
+                    chat_id=user_id,
+                    text=text,
+                    parse_mode=MARKDOWN_PARSE_MODE,
+                )
+            except BadRequest as exc:
+                if "Can't parse entities" not in str(exc):
+                    raise
+                # Retry without Markdown on parse error
+                logger.warning("Markdown parse failed in send_message, retrying plain text: %s", exc)
+                message = await self._app.bot.send_message(chat_id=user_id, text=text)
+            
+            return {
+                "message_id": str(message.message_id),
+                "timestamp": dt.utcnow().isoformat() + "Z",
+                "status": "sent",
+                "user_id": user_id,
+            }
+        except BadRequest as exc:
+            logger.error(
+                "Failed to send message to user %s: %s",
+                user_id,
+                exc,
+            )
+            raise
+
     async def stop(self) -> None:
         """Stop polling and shut down the Telegram application."""
         if self._app is None:

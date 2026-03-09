@@ -60,6 +60,31 @@ class BaseClient(ABC):
     async def stop(self) -> None:
         """Gracefully disconnect from the platform and release resources."""
 
+    @abstractmethod
+    async def send_message(self, user_id: str, text: str) -> dict:
+        """Send a direct message to a specific user.
+
+        This method sends a plain text message directly to a user, bypassing
+        the regular message handler. It is intended for programmatic message
+        delivery (e.g., cron jobs, scheduled notifications).
+
+        Args:
+            user_id: The user/chat ID to send the message to.
+            text: The message text to send. May include Markdown formatting
+                if the client supports it.
+
+        Returns:
+            A dict with keys:
+                - message_id: The platform-specific message ID (str)
+                - timestamp: ISO8601 timestamp when message was sent (str)
+                - status: Status message (str, e.g. \"sent\")
+                - user_id: Echo of the user_id parameter (str)
+
+        Raises:
+            Exception: Platform-specific exceptions on send failures (network,
+                authentication, rate limits, invalid user_id).
+        """
+
     def set_handler(self, handler: MessageHandler) -> None:
         """Replace the current message handler with *handler*.
 

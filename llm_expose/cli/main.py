@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
+from datetime import datetime
 from typing import Optional
 
 import typer
@@ -45,6 +47,9 @@ from llm_expose.config.models import ExposureConfig
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.providers.litellm_provider import LiteLLMProvider
 from llm_expose.clients.telegram import TelegramClient
+from llm_expose.clients.base import BaseClient
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Typer application
@@ -892,6 +897,111 @@ def start() -> None:
     )
     
     _start_service(config)
+
+
+# ---------------------------------------------------------------------------
+# MESSAGE Command
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def message(
+    channel: str = typer.Argument(
+        ...,
+        help="Channel config name to send the message through",
+    ),
+    user_id: str = typer.Argument(
+        ...,
+        help="User/Chat ID to send the message to (for Telegram this is the chat.id)",
+    ),
+    text: str = typer.Argument(
+        ...,
+        help="Message text to send",
+    ),
+    llm_completion: bool = typer.Option(
+        False,
+        "--llm-completion",
+        help="(Not yet implemented) Process text through LLM before sending",
+    ),
+) -> None:
+    """Send a direct message to a specific user in a channel.
+    
+    Examples:
+        llm-expose message support 12345 "System is down"
+        llm-expose message alerts 67890 "Scheduled maintenance at midnight"
+    
+    This command is useful for cron jobs and scheduled notifications.
+    The message is sent directly to the user without going through the
+    regular message handler.
+    
+    User must be paired with the channel (run 'llm-expose add pair' if needed).
+    """
+    # Validate inputs
+    channel = channel.strip()
+    user_id = user_id.strip()
+    text = text.strip()
+
+    if not channel:
+        console.print("[red]Error: Channel name cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    if not user_id:
+        console.print("[red]Error: User ID cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    if not text:
+        console.print("[red]Error: Message text cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    if llm_completion:
+        console.print("[red]Error: --llm-completion is not yet implemented.[/red]")
+        console.print("[yellow]Tip: This feature will be available in a future release.[/yellow]")
+        raise typer.Exit(code=1)
+
+    # Load channel configuration
+    try:
+        client_cfg = load_channel(channel)
+    except FileNotFoundError:
+        console.print(f"[red]Error: Channel '{channel}' not found.[/red]")
+        console.print("[yellow]Tip: Run 'llm-expose list channel' to see available channels.[/yellow]")
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Error: Failed to load channel '{channel}': {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    # Validate pairing: ensure user_id is paired with this channel
+    try:
+        paired_users = get_pairs_for_channel(channel)
+    except Exception as exc:
+        console.print(f"[red]Error: Failed to load pairing configuration: {exc}[/red]")
+        raise typer.Exit(code=1)
+
+    if user_id not in paired_users:
+        console.print(
+            f"[red]Error: User '{user_id}' is not paired with channel '{channel}'.[/red]"
+        )
+        if paired_users:
+            console.print(f"[yellow]Paired users: {', '.join(paired_users)}[/yellow]")
+        console.print(
+            f"[yellow]Tip: Add this user with: llm-expose add pair {user_id} --channel {channel}[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    # Create client instance and send message
+    try:
+        # Client requires a handler, but send_message() doesn't use it
+        client = TelegramClient(client_cfg, handler=_placeholder_handler)
+        
+        # Run async send_message in event loop
+        result = asyncio.run(client.send_message(user_id, text))
+        
+        # Output result as JSON for cron integration
+        console.print(json.dumps(result, indent=2))
+        
+    except Exception as exc:
+        console.print(f"[red]Error: Failed to send message: {exc}[/red]")
+        logger.exception("Message send error")
+        raise typer.Exit(code=1)
 
 
 # ---------------------------------------------------------------------------
