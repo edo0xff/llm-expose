@@ -37,6 +37,14 @@ class TelegramClientConfig(BaseModel):
 
     client_type: Literal["telegram"] = "telegram"
     bot_token: str = Field(description="Telegram bot token from @BotFather")
+    mcp_servers: list[str] = Field(
+        default_factory=list,
+        description="List of MCP server names attached to this channel",
+    )
+    system_prompt: Optional[str] = Field(
+        default=None,
+        description="Custom system prompt for this channel. Falls back to default when omitted.",
+    )
 
     @field_validator("bot_token")
     @classmethod
@@ -45,6 +53,29 @@ class TelegramClientConfig(BaseModel):
         if not v or not v.strip():
             raise ValueError("bot_token must not be empty or whitespace")
         return v.strip()
+
+    @field_validator("mcp_servers")
+    @classmethod
+    def normalize_mcp_servers(cls, values: list[str]) -> list[str]:
+        """Normalize attached MCP server names preserving order and uniqueness."""
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            name = value.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append(name)
+        return normalized
+
+    @field_validator("system_prompt")
+    @classmethod
+    def normalize_system_prompt(cls, value: Optional[str]) -> Optional[str]:
+        """Normalize optional channel system prompt by trimming outer whitespace."""
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
 
 class MCPServerConfig(BaseModel):
@@ -144,10 +175,6 @@ class ExposureConfig(BaseModel):
     name: str = Field(description="Unique name for this exposure configuration")
     provider: ProviderConfig = Field(description="LLM provider settings")
     client: TelegramClientConfig = Field(description="Messaging client settings")
-    system_prompt: Optional[str] = Field(
-        default=None,
-        description="Custom system prompt for this exposure. If not set, uses default prompt.",
-    )
 
     @field_validator("name")
     @classmethod

@@ -60,8 +60,8 @@ class Orchestrator:
         # Per-channel conversation histories (keyed by channel ID).
         # Each channel gets its own history with the configured system prompt.
         self._histories: dict[str, list[Message]] = {}
-        # Use custom system prompt from config, or fall back to default
-        self._system_prompt = config.system_prompt or _DEFAULT_SYSTEM_PROMPT
+        # Use custom system prompt from channel config, or fall back to default.
+        self._system_prompt = config.client.system_prompt or _DEFAULT_SYSTEM_PROMPT
         # Backward compatibility for older tests/callers that access _history
         # or call _handle_message(user_message) without a channel ID.
         self._default_channel_id = "__default__"
@@ -77,6 +77,25 @@ class Orchestrator:
         try:
             mcp_config = load_mcp_config()
             self._mcp_settings = mcp_config.settings
+            attached_server_names = set(config.client.mcp_servers)
+            if attached_server_names:
+                available_server_names = {server.name for server in mcp_config.servers}
+                missing_server_names = sorted(attached_server_names - available_server_names)
+                if missing_server_names:
+                    logger.warning(
+                        "Channel '%s' has missing MCP server attachments: %s",
+                        config.name,
+                        ", ".join(missing_server_names),
+                    )
+
+                mcp_config.servers = [
+                    server
+                    for server in mcp_config.servers
+                    if server.name in attached_server_names
+                ]
+            else:
+                mcp_config.servers = []
+
             if any(server.enabled for server in mcp_config.servers):
                 self._mcp_runtime = MCPRuntimeManager(mcp_config)
         except Exception as exc:  # pragma: no cover - defensive logging path

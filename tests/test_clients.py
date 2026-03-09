@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -182,6 +183,27 @@ class TestOrchestrator:
         await orch._handle_message("Turn 2")
         assert len(orch._history) == 5
 
+    def test_orchestrator_uses_channel_system_prompt(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(
+                bot_token="123:tok",
+                system_prompt="You are specialized for this channel.",
+            ),
+        )
+        provider = MagicMock()
+        client = MagicMock()
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        assert orch._history[0]["content"] == "You are specialized for this channel."
+
+    def test_orchestrator_uses_default_prompt_when_channel_prompt_missing(self) -> None:
+        orch, _, _ = self._make_orchestrator()
+        assert "helpful AI assistant" in str(orch._history[0]["content"])
+
     @pytest.mark.asyncio
     async def test_run_starts_client(self) -> None:
         orch, _, client = self._make_orchestrator()
@@ -217,7 +239,7 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="MCP reply")
@@ -286,7 +308,7 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["missing-url"]),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="No tools reply")
@@ -363,7 +385,7 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="fallback")
@@ -441,7 +463,7 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="rejection handled")
@@ -515,7 +537,7 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="fallback")
@@ -576,3 +598,49 @@ class TestOrchestrator:
         await orch._handle_message("42", "Use MCP")
         blocked = await orch._handle_message("42", "another question")
         assert "waiting for confirmation" in blocked
+
+    def test_orchestrator_does_not_create_runtime_without_channel_attachments(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=[]),
+        )
+        provider = MagicMock()
+        client = MagicMock()
+        mcp_config = MCPConfig(
+            servers=[
+                MCPServerConfig(
+                    name="remote-mcp",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    enabled=True,
+                )
+            ]
+        )
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager"
+        ) as runtime_cls:
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        assert orch._mcp_runtime is None
+        runtime_cls.assert_not_called()
+
+    def test_orchestrator_warns_for_missing_attached_mcp_servers(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.WARNING, logger="llm_expose.core.orchestrator")
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["ghost"]),
+        )
+        provider = MagicMock()
+        client = MagicMock()
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager"
+        ) as runtime_cls:
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        assert orch._mcp_runtime is None
+        runtime_cls.assert_not_called()
+        assert "missing MCP server attachments" in caplog.text

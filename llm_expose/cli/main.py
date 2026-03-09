@@ -116,6 +116,62 @@ def _select_from_list(prompt: str, options: list[str]) -> str:
         console.print("[red]  Invalid selection. Please enter a number from the list.[/red]")
 
 
+def _parse_multi_select_numbers(raw: str) -> list[int] | None:
+    """Parse comma-separated positive integers preserving order and uniqueness."""
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if not parts:
+        return None
+
+    values: list[int] = []
+    seen: set[int] = set()
+    for part in parts:
+        if not part.isdigit():
+            return None
+        value = int(part)
+        if value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return values
+
+
+def _select_mcp_servers_for_channel(options: list[str]) -> list[str]:
+    """Select one or many MCP servers to attach to a channel."""
+    if not options:
+        console.print("\n[yellow]No MCP servers configured. This channel will start with none attached.[/yellow]")
+        return []
+
+    all_index = len(options) + 1
+    none_index = len(options) + 2
+
+    console.print("\n[bold]Available MCP servers:[/bold]")
+    for idx, option in enumerate(options, start=1):
+        console.print(f"  [cyan]{idx})[/cyan] {option}")
+    console.print(f"  [cyan]{all_index})[/cyan] Select all")
+    console.print(f"  [cyan]{none_index})[/cyan] Select none")
+
+    while True:
+        raw = Prompt.ask("  Enter number(s), comma-separated")
+        selected_indexes = _parse_multi_select_numbers(raw)
+        if selected_indexes is None:
+            console.print("[red]  Invalid input. Use numbers separated by commas (example: 1,3).[/red]")
+            continue
+
+        if all_index in selected_indexes and len(selected_indexes) == 1:
+            return options.copy()
+        if none_index in selected_indexes and len(selected_indexes) == 1:
+            return []
+        if all_index in selected_indexes or none_index in selected_indexes:
+            console.print("[red]  'Select all' and 'Select none' must be used alone.[/red]")
+            continue
+
+        if any(index < 1 or index > len(options) for index in selected_indexes):
+            console.print("[red]  Invalid selection. Please pick numbers from the list.[/red]")
+            continue
+
+        return [options[index - 1] for index in selected_indexes]
+
+
 # ---------------------------------------------------------------------------
 # ADD Commands
 # ---------------------------------------------------------------------------
@@ -243,8 +299,32 @@ def add_channel() -> None:
         bot_token = raw_token.strip()
         if not bot_token:
             console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
-    
-    client_cfg = TelegramClientConfig(bot_token=bot_token)
+
+    available_mcp_servers = list_mcp_servers()
+    attached_mcp_servers = _select_mcp_servers_for_channel(available_mcp_servers)
+
+    system_prompt: Optional[str] = None
+    if Confirm.ask("\n[bold]Do you want to set a custom system prompt for this channel?[/bold]", default=False):
+        while True:
+            prompt_path = Prompt.ask("  Enter path to system prompt text file")
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    system_prompt = f.read()
+                break
+            except Exception as exc:
+                console.print(f"[red]Failed to load system prompt from '{prompt_path}': {exc}[/red]")
+                if not Confirm.ask("Do you want to try again?", default=True):
+                    system_prompt = None
+                    break
+
+        if system_prompt:
+            console.print("\n[green]Custom system prompt loaded successfully![/green]")
+
+    client_cfg = TelegramClientConfig(
+        bot_token=bot_token,
+        mcp_servers=attached_mcp_servers,
+        system_prompt=system_prompt,
+    )
 
     # ---- Save ---------------------------------------------------------
     try:
@@ -377,14 +457,16 @@ def list_channels_cmd() -> None:
     table.add_column("Name", style="bold")
     table.add_column("Type", style="magenta")
     table.add_column("Bot Token", style="red")
+    table.add_column("MCP Attached", style="cyan")
 
     for idx, name in enumerate(channels, start=1):
         try:
             cfg = load_channel(name)
             api_key_offuscated = cfg.bot_token[:4] + "****" if cfg.bot_token else "-"
-            table.add_row(str(idx), name, cfg.client_type, api_key_offuscated)
+            attached = ", ".join(cfg.mcp_servers) if cfg.mcp_servers else "none"
+            table.add_row(str(idx), name, cfg.client_type, api_key_offuscated, attached)
         except Exception:
-            table.add_row(str(idx), name, "[red]error[/red]", "-")
+            table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
 
     console.print(table)
 
@@ -411,7 +493,7 @@ def list_mcp_cmd() -> None:
 
     if not servers:
         console.print(
-            "\n[yellow]No MCP servers configured. Use [bold]llm-expose mcp add[/bold] to add one.[/yellow]"
+            "\n[yellow]No MCP servers configured. Use [bold]llm-expose add mcp[/bold] to add one.[/yellow]"
         )
         return
 
@@ -420,8 +502,8 @@ def list_mcp_cmd() -> None:
     table.add_column("Name", style="bold")
     table.add_column("Transport", style="green")
     table.add_column("Target", style="blue")
+    table.add_column("Args", style="magenta")
     table.add_column("Confirmation", style="yellow")
-    table.add_column("Enabled", style="magenta")
 
     for idx, name in enumerate(servers, start=1):
         try:
@@ -432,8 +514,8 @@ def list_mcp_cmd() -> None:
                 server.name,
                 server.transport,
                 target or "-",
+                " ".join(list(server.args)),
                 server.tool_confirmation,
-                "yes" if server.enabled else "no",
             )
         except Exception:
             table.add_row(str(idx), name, "[red]error[/red]", "-", "-", "-")
@@ -635,24 +717,6 @@ def start() -> None:
         console.print(f"[red]Failed to load channel '{channel_name}': {exc}[/red]")
         raise typer.Exit(code=1) from exc
 
-    system_prompt = None
-    #  Ask for load a custom system prompt or use the default one
-    if Confirm.ask("\n[bold]Do you want to set a custom system prompt?[/bold]", default=False):
-        # Load promt from text file
-        while True:
-            prompt_path = Prompt.ask("  Enter path to system prompt text file")
-            try:
-                with open(prompt_path, "r", encoding="utf-8") as f:
-                    system_prompt = f.read()
-                break
-            except Exception as exc:
-                console.print(f"[red]Failed to load system prompt from '{prompt_path}': {exc}[/red]")
-                if not Confirm.ask("Do you want to try again?", default=True):
-                    system_prompt = None
-                    break
-        
-        console.print(f"\n[green]Custom system prompt loaded successfully![/green]")
-
     # ---- Display summary and confirm ----------------------------------
     console.print("\n[bold cyan]Selected Configuration:[/bold cyan]")
     summary_table = Table(border_style="cyan", show_header=False)
@@ -664,13 +728,23 @@ def start() -> None:
     summary_table.add_row("Model ID", provider_cfg.model)
     summary_table.add_row("Channel", channel_name)
     summary_table.add_row("Client Type", client_cfg.client_type)
-    summary_table.add_row("System Prompt", system_prompt if system_prompt else "[dim]default[/dim]")
+    summary_table.add_row(
+        "MCP Attached",
+        ", ".join(client_cfg.mcp_servers) if client_cfg.mcp_servers else "[dim]none[/dim]",
+    )
+    summary_table.add_row(
+        "System Prompt",
+        client_cfg.system_prompt if client_cfg.system_prompt else "[dim]default[/dim]",
+    )
     console.print(summary_table)
 
-    # ---- Configure MCP settings if servers exist ----------------------
-    mcp_servers = list_mcp_servers()
-    if mcp_servers:
-        console.print(f"\n[bold cyan]Detected {len(mcp_servers)} MCP server(s) configured.[/bold cyan]")        
+    if client_cfg.mcp_servers:
+        console.print(
+            f"\n[bold cyan]MCP attached to this channel ({len(client_cfg.mcp_servers)}):[/bold cyan] "
+            + ", ".join(client_cfg.mcp_servers)
+        )
+    else:
+        console.print("\n[bold cyan]MCP attached to this channel:[/bold cyan] none")
 
     if not Confirm.ask("\n[bold]Start the service?[/bold]"):
         console.print("[yellow]Cancelled.[/yellow]")
@@ -679,7 +753,7 @@ def start() -> None:
     # ---- Build and start service --------------------------------------
     # Create a temporary ExposureConfig for the orchestrator
     exposure_name = f"{model_name}_{channel_name}"
-    config = ExposureConfig(name=exposure_name, provider=provider_cfg, client=client_cfg, system_prompt=system_prompt)
+    config = ExposureConfig(name=exposure_name, provider=provider_cfg, client=client_cfg)
     
     _start_service(config)
 

@@ -89,6 +89,31 @@ class TestTelegramClientConfig:
         with pytest.raises(Exception):
             TelegramClientConfig(bot_token="   ")
 
+    def test_mcp_servers_defaults_to_empty(self) -> None:
+        cfg = TelegramClientConfig(bot_token="123456:ABC")
+        assert cfg.mcp_servers == []
+
+    def test_mcp_servers_are_normalized_and_deduplicated(self) -> None:
+        cfg = TelegramClientConfig(
+            bot_token="123456:ABC",
+            mcp_servers=["  foo ", "bar", "foo", "", "   ", "baz"],
+        )
+        assert cfg.mcp_servers == ["foo", "bar", "baz"]
+
+    def test_system_prompt_strips_outer_whitespace(self) -> None:
+        cfg = TelegramClientConfig(
+            bot_token="123456:ABC",
+            system_prompt="  You are channel-specific.  ",
+        )
+        assert cfg.system_prompt == "You are channel-specific."
+
+    def test_system_prompt_whitespace_only_becomes_none(self) -> None:
+        cfg = TelegramClientConfig(
+            bot_token="123456:ABC",
+            system_prompt="   ",
+        )
+        assert cfg.system_prompt is None
+
 
 class TestMCPConfig:
     def test_valid_stdio_server(self) -> None:
@@ -207,6 +232,25 @@ class TestChannelLoader:
         assert loaded.client_type == cfg.client_type
         assert loaded.bot_token == cfg.bot_token
 
+    def test_save_and_load_roundtrip_with_system_prompt(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = TelegramClientConfig(
+            bot_token="123:tok",
+            mcp_servers=["filesystem"],
+            system_prompt="You are a bot for this channel.",
+        )
+
+        save_channel("channel-with-prompt", cfg)
+        loaded = load_channel("channel-with-prompt")
+
+        assert loaded.bot_token == "123:tok"
+        assert loaded.mcp_servers == ["filesystem"]
+        assert loaded.system_prompt == "You are a bot for this channel."
+
     def test_load_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
@@ -236,6 +280,24 @@ class TestChannelLoader:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             delete_channel("ghost")
+
+    def test_load_legacy_channel_defaults_mcp_servers_to_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        channel_path = tmp_path / "channels" / "legacy.yaml"
+        channel_path.parent.mkdir(parents=True, exist_ok=True)
+        channel_path.write_text(
+            "name: legacy\nclient_type: telegram\nbot_token: 123:tok\n",
+            encoding="utf-8",
+        )
+
+        loaded = load_channel("legacy")
+        assert loaded.bot_token == "123:tok"
+        assert loaded.mcp_servers == []
+        assert loaded.system_prompt is None
 
 
 class TestMCPLoader:
