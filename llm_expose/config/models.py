@@ -75,6 +75,10 @@ class MCPServerConfig(BaseModel):
         description="Optional allow-list of MCP tool names available to the model",
     )
     enabled: bool = Field(default=True, description="Whether this server is enabled")
+    tool_confirmation: Literal["required", "never", "default"] = Field(
+        default="default",
+        description="Tool confirmation mode: 'required' forces approval, 'never' auto-executes, 'default' uses global setting",
+    )
 
     @field_validator("name")
     @classmethod

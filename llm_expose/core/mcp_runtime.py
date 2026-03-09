@@ -26,6 +26,7 @@ class MCPRuntimeManager:
         self._initialized = False
         self._tools: list[ToolSpec] = []
         self._tool_to_client: dict[str, Any] = {}  # tool_name -> fastmcp.Client
+        self._tool_to_server: dict[str, str] = {}  # tool_name -> server_name
         self._clients: dict[str, Any] = {}  # server_name -> fastmcp.Client
         self._server_instructions: list[str] = []  # Aggregated instructions from servers
 
@@ -40,6 +41,17 @@ class MCPRuntimeManager:
         if not self._server_instructions:
             return ""
         return "\n\n".join(self._server_instructions)
+
+    def get_tool_server_name(self, tool_name: str) -> str | None:
+        """Return the name of the server that provides the given tool."""
+        return self._tool_to_server.get(tool_name)
+
+    def get_server_config(self, server_name: str) -> MCPServerConfig | None:
+        """Return the configuration for the given server."""
+        for server in self._config.servers:
+            if server.name == server_name:
+                return server
+        return None
 
     async def initialize(self) -> None:
         """Open MCP connections and load tools from enabled servers."""
@@ -172,6 +184,7 @@ class MCPRuntimeManager:
 
             self._tools.append(openai_tool)
             self._tool_to_client[tool_name] = client
+            self._tool_to_server[tool_name] = server.name
 
     async def _fetch_server_prompts(self, server: MCPServerConfig, client: Any) -> None:
         """Fetch and store server prompts/instructions for tool usage guidance."""

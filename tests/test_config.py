@@ -116,6 +116,28 @@ class TestMCPConfig:
         )
         assert cfg.allowed_tools == ["search_docs"]
 
+    def test_tool_confirmation_defaults_to_default(self) -> None:
+        cfg = MCPServerConfig(name="filesystem", transport="stdio", command="npx")
+        assert cfg.tool_confirmation == "default"
+
+    def test_tool_confirmation_accepts_required(self) -> None:
+        cfg = MCPServerConfig(
+            name="filesystem",
+            transport="stdio",
+            command="npx",
+            tool_confirmation="required",
+        )
+        assert cfg.tool_confirmation == "required"
+
+    def test_tool_confirmation_accepts_never(self) -> None:
+        cfg = MCPServerConfig(
+            name="filesystem",
+            transport="stdio",
+            command="npx",
+            tool_confirmation="never",
+        )
+        assert cfg.tool_confirmation == "never"
+
 
 # ---------------------------------------------------------------------------
 # Loader tests

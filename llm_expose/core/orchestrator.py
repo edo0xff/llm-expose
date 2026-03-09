@@ -30,6 +30,7 @@ class _PendingApproval:
     created_at: float
     tools: list[ToolSpec]
     tool_calls: list[Any]
+    server_names: dict[str, str]  # tool_name -> server_name mapping
 
 
 class Orchestrator:
@@ -175,10 +176,8 @@ class Orchestrator:
             history.append({"role": "assistant", "content": reply})
             return reply
 
-        if self._mcp_settings.confirmation_mode == "required":
-            return await self._handle_message_with_required_approval(history, tools, channel_id)
-
-        return await self._handle_message_with_mcp_tools(history, tools)
+        # Use mixed approval handler which respects per-server confirmation settings
+        return await self._handle_message_with_mixed_approval(history, tools, channel_id)
 
     @staticmethod
     def _parse_approval_decision(text: str) -> tuple[bool, str] | None:
@@ -195,6 +194,31 @@ class Orchestrator:
 
     def _is_pending_expired(self, pending: _PendingApproval) -> bool:
         return (time.monotonic() - pending.created_at) > self._approval_ttl_seconds
+
+    def _get_tool_confirmation_mode(self, tool_name: str) -> str:
+        """Determine confirmation mode for a tool based on its server config.
+        
+        Returns:
+            "required" if tool needs approval, "optional" if it auto-executes.
+        """
+        if self._mcp_runtime is None:
+            return self._mcp_settings.confirmation_mode
+        
+        server_name = self._mcp_runtime.get_tool_server_name(tool_name)
+        if server_name is None:
+            return self._mcp_settings.confirmation_mode
+        
+        server_config = self._mcp_runtime.get_server_config(server_name)
+        if server_config is None:
+            return self._mcp_settings.confirmation_mode
+        
+        # Resolve per-server confirmation setting
+        if server_config.tool_confirmation == "default":
+            return self._mcp_settings.confirmation_mode
+        elif server_config.tool_confirmation == "required":
+            return "required"
+        else:  # "never"
+            return "optional"
 
     async def _handle_message_with_required_approval(
         self,
@@ -213,31 +237,137 @@ class Orchestrator:
         if not tool_calls:
             return str(assistant_message.get("content") or "")
 
+        # Build server name mapping for the tool calls
+        server_names: dict[str, str] = {}
+        if self._mcp_runtime is not None:
+            for call in tool_calls:
+                function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+                if isinstance(function_obj, dict):
+                    tool_name = function_obj.get("name")
+                else:
+                    tool_name = getattr(function_obj, "name", None)
+                if tool_name:
+                    server_name = self._mcp_runtime.get_tool_server_name(tool_name)
+                    if server_name:
+                        server_names[tool_name] = server_name
+
         approval_id = uuid.uuid4().hex[:8]
         self._pending_approvals[channel_id] = _PendingApproval(
             approval_id=approval_id,
             created_at=time.monotonic(),
             tools=tools,
             tool_calls=tool_calls,
+            server_names=server_names,
         )
-        return self._format_approval_prompt(approval_id, tool_calls)
+        return self._format_approval_prompt(approval_id, tool_calls, server_names)
 
-    def _format_approval_prompt(self, approval_id: str, tool_calls: list[Any]) -> str:
-        tool_names: list[str] = []
+    def _format_approval_prompt(self, approval_id: str, tool_calls: list[Any], server_names: dict[str, str] | None = None) -> str:
+        tool_info: list[str] = []
         for call in tool_calls:
             function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
             if isinstance(function_obj, dict):
                 name = function_obj.get("name")
             else:
                 name = getattr(function_obj, "name", None)
-            tool_names.append(str(name or "unknown_tool"))
+            tool_name = str(name or "unknown_tool")
+            
+            # Add server name if available
+            if server_names and tool_name in server_names:
+                tool_info.append(f"{tool_name} ({server_names[tool_name]})")
+            else:
+                tool_info.append(tool_name)
 
-        names = ", ".join(tool_names)
+        names = ", ".join(tool_info)
         return (
             f"Tool execution requires confirmation (id: {approval_id}).\n"
             f"Requested tool(s): {names}\n"
             f"Reply `approve {approval_id}` to continue or `reject {approval_id}` to cancel."
         )
+
+    async def _handle_message_with_mixed_approval(
+        self,
+        history: list[Message],
+        tools: list[ToolSpec],
+        channel_id: str,
+    ) -> str:
+        """Handle message with per-server tool confirmation settings.
+        
+        This method splits tool calls into auto-execute and needs-approval groups,
+        executes auto-execute tools immediately, and creates pending approvals for
+        tools that require confirmation.
+        """
+        max_tool_rounds = 8
+
+        for _ in range(max_tool_rounds):
+            assistant_message = await self._provider_complete_message(
+                history,
+                tools=tools,
+                tool_choice=self._tool_choice,
+            )
+            history.append(assistant_message)
+
+            tool_calls = assistant_message.get("tool_calls") or []
+            if not tool_calls:
+                return str(assistant_message.get("content") or "")
+
+            # Split tool calls by confirmation requirement
+            auto_execute_calls: list[Any] = []
+            needs_approval_calls: list[Any] = []
+
+            for call in tool_calls:
+                function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+                if isinstance(function_obj, dict):
+                    tool_name = function_obj.get("name")
+                else:
+                    tool_name = getattr(function_obj, "name", None)
+
+                if tool_name:
+                    confirmation_mode = self._get_tool_confirmation_mode(tool_name)
+                    if confirmation_mode == "required":
+                        needs_approval_calls.append(call)
+                    else:
+                        auto_execute_calls.append(call)
+                else:
+                    # Unknown tool name, default to auto-execute
+                    auto_execute_calls.append(call)
+
+            # Execute auto-execute tools immediately
+            if auto_execute_calls:
+                if self._mcp_runtime is None:
+                    return "MCP runtime unavailable while handling tool calls."
+                await self._execute_tool_calls(history, auto_execute_calls)
+
+            # If there are tools needing approval, create pending approval
+            if needs_approval_calls:
+                # Build server name mapping for the tool calls needing approval
+                server_names: dict[str, str] = {}
+                if self._mcp_runtime is not None:
+                    for call in needs_approval_calls:
+                        function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+                        if isinstance(function_obj, dict):
+                            tool_name = function_obj.get("name")
+                        else:
+                            tool_name = getattr(function_obj, "name", None)
+                        if tool_name:
+                            server_name = self._mcp_runtime.get_tool_server_name(tool_name)
+                            if server_name:
+                                server_names[tool_name] = server_name
+
+                approval_id = uuid.uuid4().hex[:8]
+                self._pending_approvals[channel_id] = _PendingApproval(
+                    approval_id=approval_id,
+                    created_at=time.monotonic(),
+                    tools=tools,
+                    tool_calls=needs_approval_calls,
+                    server_names=server_names,
+                )
+                return self._format_approval_prompt(approval_id, needs_approval_calls, server_names)
+
+            # If only auto-execute tools were present, continue the loop
+
+        fallback = "Tool execution exceeded maximum rounds; stopping to avoid infinite loop."
+        history.append({"role": "assistant", "content": fallback})
+        return fallback
 
     async def _handle_approval_decision(
         self,

@@ -330,6 +330,13 @@ class TestOrchestrator:
         fake_runtime.initialize = AsyncMock()
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.get_tool_server_name = MagicMock(return_value="missing-url")
+        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
+            name="missing-url",
+            transport="stdio",
+            command="npx",
+            tool_confirmation="default",
+        ))
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -398,6 +405,13 @@ class TestOrchestrator:
         fake_runtime.initialize = AsyncMock()
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.get_tool_server_name = MagicMock(return_value="remote-mcp")
+        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
+            name="remote-mcp",
+            transport="sse",
+            url="https://mcp.example.com/sse",
+            tool_confirmation="default",
+        ))
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -466,6 +480,13 @@ class TestOrchestrator:
         fake_runtime.initialize = AsyncMock()
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.get_tool_server_name = MagicMock(return_value="remote-mcp")
+        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
+            name="remote-mcp",
+            transport="sse",
+            url="https://mcp.example.com/sse",
+            tool_confirmation="default",
+        ))
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -529,6 +550,13 @@ class TestOrchestrator:
         fake_runtime.initialize = AsyncMock()
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.get_tool_server_name = MagicMock(return_value="remote-mcp")
+        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
+            name="remote-mcp",
+            transport="sse",
+            url="https://mcp.example.com/sse",
+            tool_confirmation="default",
+        ))
         fake_runtime.tools = [
             {
                 "type": "function",

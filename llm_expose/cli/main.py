@@ -420,6 +420,7 @@ def list_mcp_cmd() -> None:
     table.add_column("Name", style="bold")
     table.add_column("Transport", style="green")
     table.add_column("Target", style="blue")
+    table.add_column("Confirmation", style="yellow")
     table.add_column("Enabled", style="magenta")
 
     for idx, name in enumerate(servers, start=1):
@@ -431,10 +432,11 @@ def list_mcp_cmd() -> None:
                 server.name,
                 server.transport,
                 target or "-",
+                server.tool_confirmation,
                 "yes" if server.enabled else "no",
             )
         except Exception:
-            table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
+            table.add_row(str(idx), name, "[red]error[/red]", "-", "-", "-")
 
     console.print("\n")
     console.print(table)
@@ -480,6 +482,17 @@ def add_mcp_cmd() -> None:
 
     enabled = Confirm.ask("  Enable this MCP server now?", default=True)
 
+    # Tool confirmation mode
+    console.print("\n[bold cyan]Tool Confirmation Mode:[/bold cyan]")
+    console.print("  [dim]• default: Use global confirmation setting[/dim]")
+    console.print("  [dim]• required: Always require user approval before executing tools[/dim]")
+    console.print("  [dim]• never: Always auto-execute tools without approval[/dim]\n")
+    
+    tool_confirmation = _select_from_list(
+        "Select tool confirmation mode:",
+        ["default", "required", "never"]
+    )
+
     server = MCPServerConfig(
         name=name,
         transport=transport,
@@ -487,6 +500,7 @@ def add_mcp_cmd() -> None:
         args=args,
         url=url,
         enabled=enabled,
+        tool_confirmation=tool_confirmation,
     )
 
     try:
