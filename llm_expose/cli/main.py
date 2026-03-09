@@ -328,6 +328,21 @@ def add_channel() -> None:
         if not bot_token:
             console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
 
+    # ---- Model selection for --llm-completion ---------------------------
+    model_name: Optional[str] = None
+    available_models = list_models()
+    if available_models or Confirm.ask("\n[bold]Do you want to set a model for LLM completion?[/bold]", default=False):
+        if available_models:
+            model_options = available_models + ["None (skip LLM completion)"]
+            selected_model = _select_from_list(
+                "Select a model for this channel (used with --llm-completion):",
+                model_options,
+            )
+            if selected_model != "None (skip LLM completion)":
+                model_name = selected_model
+        else:
+            console.print("[yellow]No models found. Run 'llm-expose add model' first to create one.[/yellow]")
+
     available_mcp_servers = list_mcp_servers()
     attached_mcp_servers = _select_mcp_servers_for_channel(available_mcp_servers)
 
@@ -352,6 +367,7 @@ def add_channel() -> None:
         bot_token=bot_token,
         mcp_servers=attached_mcp_servers,
         system_prompt=system_prompt,
+        model_name=model_name,
     )
 
     # ---- Save ---------------------------------------------------------
@@ -776,46 +792,9 @@ def delete_mcp_cmd(
 
 @app.command()
 def start() -> None:
-    """Start the LLM exposure service by selecting a model and channel."""
+    """Start the LLM exposure service by selecting a channel."""
     _print_banner()
     console.print("\n[bold green]Start LLM Exposure Service[/bold green]\n")
-
-    # ---- Select model -------------------------------------------------
-    models = list_models()
-    if not models:
-        console.print("[red]No models found. Please run [bold]llm-expose add model[/bold] first.[/red]")
-        raise typer.Exit(code=1)
-
-    # Show available models in a table
-    model_table = Table(title="Available Models", border_style="cyan", show_lines=True)
-    model_table.add_column("#", style="dim", width=4)
-    model_table.add_column("Name", style="bold")
-    model_table.add_column("Provider", style="green")
-    model_table.add_column("Model", style="blue")
-    model_table.add_column("API Key", style="red")
-
-    for idx, name in enumerate(models, start=1):
-        try:
-            cfg = load_model(name)
-            api_key_offuscated = cfg.api_key[:4] + "****" if cfg.api_key else "-"
-            model_table.add_row(
-                str(idx),
-                name,
-                cfg.provider_name,
-                cfg.model,
-                api_key_offuscated
-            )
-        except Exception:
-            model_table.add_row(str(idx), name, "[red]error[/red]", "-")
-
-    console.print(model_table)
-    model_name = _select_from_list("Select a model:", models)
-
-    try:
-        provider_cfg = load_model(model_name)
-    except Exception as exc:
-        console.print(f"[red]Failed to load model '{model_name}': {exc}[/red]")
-        raise typer.Exit(code=1) from exc
 
     # ---- Select channel -----------------------------------------------
     channels = list_channels()
@@ -828,22 +807,24 @@ def start() -> None:
     channel_table.add_column("#", style="dim", width=4)
     channel_table.add_column("Name", style="bold")
     channel_table.add_column("Type", style="magenta")
+    channel_table.add_column("Model", style="green")
     channel_table.add_column("Bot Token", style="red")
 
     for idx, name in enumerate(channels, start=1):
         try:
             cfg = load_channel(name)
             bot_token_offuscated = cfg.bot_token[:4] + "****" if cfg.bot_token else "-"
+            model_display = cfg.model_name if cfg.model_name else "[dim]none[/dim]"
             channel_table.add_row(
                 str(idx),
                 name,
                 cfg.client_type,
+                model_display,
                 bot_token_offuscated
             )
         except Exception:
-            channel_table.add_row(str(idx), name, "[red]error[/red]", "-")
+            channel_table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
 
-    console.print("\n")
     console.print(channel_table)
     channel_name = _select_from_list("Select a channel:", channels)
 
@@ -853,17 +834,34 @@ def start() -> None:
         console.print(f"[red]Failed to load channel '{channel_name}': {exc}[/red]")
         raise typer.Exit(code=1) from exc
 
+    # ---- Load model from channel -----------------------------------------------
+    if not client_cfg.model_name:
+        console.print(f"[red]Error: Channel '{channel_name}' has no model configured.[/red]")
+        console.print(f"[yellow]Tip: Run [bold]llm-expose add channel {channel_name}[/bold] to set a model.[/yellow]")
+        raise typer.Exit(code=1)
+
+    model_name = client_cfg.model_name
+    try:
+        provider_cfg = load_model(model_name)
+    except FileNotFoundError:
+        console.print(f"[red]Error: Model '{model_name}' not found.[/red]")
+        console.print(f"[yellow]Tip: Run [bold]llm-expose list model[/bold] to see available models.[/yellow]")
+        raise typer.Exit(code=1) from None
+    except Exception as exc:
+        console.print(f"[red]Failed to load model '{model_name}': {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
     # ---- Display summary and confirm ----------------------------------
     console.print("\n[bold cyan]Selected Configuration:[/bold cyan]")
     summary_table = Table(border_style="cyan", show_header=False)
     summary_table.add_column("Key", style="bold")
     summary_table.add_column("Value")
 
+    summary_table.add_row("Channel", channel_name)
+    summary_table.add_row("Client Type", client_cfg.client_type)
     summary_table.add_row("Model", model_name)
     summary_table.add_row("Provider", provider_cfg.provider_name)
     summary_table.add_row("Model ID", provider_cfg.model)
-    summary_table.add_row("Channel", channel_name)
-    summary_table.add_row("Client Type", client_cfg.client_type)
     summary_table.add_row(
         "MCP Attached",
         ", ".join(client_cfg.mcp_servers) if client_cfg.mcp_servers else "[dim]none[/dim]",
@@ -916,24 +914,33 @@ def message(
     ),
     text: str = typer.Argument(
         ...,
-        help="Message text to send",
+        help="Message text to send, or instructions for LLM if --llm-completion is used",
     ),
     llm_completion: bool = typer.Option(
         False,
         "--llm-completion",
-        help="(Not yet implemented) Process text through LLM before sending",
+        help="Process text as instructions to LLM (generates response to send)",
+    ),
+    system_prompt_file: Optional[str] = typer.Option(
+        None,
+        "--system-prompt-file",
+        help="Path to custom system prompt file (overrides channel's system prompt)",
     ),
 ) -> None:
     """Send a direct message to a specific user in a channel.
     
+    Without --llm-completion, the text is sent directly to the user.
+    
+    With --llm-completion, the text is treated as instructions to the LLM.
+    The LLM uses the channel's system prompt + your instructions to generate
+    a response, which is then sent to the user (your instructions are not sent).
+    
     Examples:
         llm-expose message support 12345 "System is down"
-        llm-expose message alerts 67890 "Scheduled maintenance at midnight"
+        llm-expose message alerts 67890 "CPU at 95%. Generate a brief alert." --llm-completion
+        llm-expose message news 12345 "Summarize today's headlines" --llm-completion --system-prompt-file /path/to/prompt.txt
     
     This command is useful for cron jobs and scheduled notifications.
-    The message is sent directly to the user without going through the
-    regular message handler.
-    
     User must be paired with the channel (run 'llm-expose add pair' if needed).
     """
     # Validate inputs
@@ -951,11 +958,6 @@ def message(
 
     if not text:
         console.print("[red]Error: Message text cannot be empty.[/red]")
-        raise typer.Exit(code=1)
-
-    if llm_completion:
-        console.print("[red]Error: --llm-completion is not yet implemented.[/red]")
-        console.print("[yellow]Tip: This feature will be available in a future release.[/yellow]")
         raise typer.Exit(code=1)
 
     # Load channel configuration
@@ -987,13 +989,91 @@ def message(
         )
         raise typer.Exit(code=1)
 
+    # Determine the final message to send
+    final_message = text
+    llm_response_text = None
+    llm_model_used = None
+
+    # If LLM completion is requested, generate response from instructions
+    if llm_completion:
+        # Validate channel has a model configured
+        if not client_cfg.model_name:
+            console.print(f"[red]Error: Channel '{channel}' has no model configured.[/red]")
+            console.print(f"[yellow]Tip: Run [bold]llm-expose add channel {channel}[/bold] to set a model.[/yellow]")
+            raise typer.Exit(code=1)
+
+        # Load model configuration
+        try:
+            provider_cfg = load_model(client_cfg.model_name)
+        except FileNotFoundError:
+            console.print(f"[red]Error: Model '{client_cfg.model_name}' not found.[/red]")
+            console.print("[yellow]Tip: Run 'llm-expose list model' to see available models.[/yellow]")
+            raise typer.Exit(code=1)
+        except Exception as exc:
+            console.print(f"[red]Error: Failed to load model '{client_cfg.model_name}': {exc}[/red]")
+            raise typer.Exit(code=1)
+
+        # Determine system prompt (override or channel's)
+        system_prompt = client_cfg.system_prompt
+        if system_prompt_file:
+            try:
+                with open(system_prompt_file, "r", encoding="utf-8") as f:
+                    system_prompt = f.read()
+                if not system_prompt.strip():
+                    console.print(f"[red]Error: System prompt file is empty.[/red]")
+                    raise typer.Exit(code=1)
+            except FileNotFoundError:
+                console.print(f"[red]Error: System prompt file '{system_prompt_file}' not found.[/red]")
+                raise typer.Exit(code=1)
+            except Exception as exc:
+                console.print(f"[red]Error: Failed to read system prompt file: {exc}[/red]")
+                raise typer.Exit(code=1)
+
+        # Use default system prompt if none provided
+        if not system_prompt:
+            system_prompt = "You are a helpful assistant. Respond concisely and professionally."
+
+        # Call LLM to generate response
+        try:
+            provider = LiteLLMProvider(provider_cfg)
+            llm_response_text = asyncio.run(
+                provider.complete(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text},
+                    ]
+                )
+            )
+            llm_model_used = client_cfg.model_name
+            final_message = llm_response_text
+            logger.info(
+                "LLM completion: generated response for user %s in channel %s using model %s",
+                user_id,
+                channel,
+                client_cfg.model_name,
+            )
+        except Exception as exc:
+            console.print(f"[red]Error: LLM failed to generate response: {exc}[/red]")
+            logger.exception("LLM completion error")
+            raise typer.Exit(code=1)
+    elif system_prompt_file:
+        # Warn if system_prompt_file is provided without --llm-completion
+        console.print(
+            "[yellow]Warning: --system-prompt-file is ignored without --llm-completion.[/yellow]"
+        )
+
     # Create client instance and send message
     try:
         # Client requires a handler, but send_message() doesn't use it
         client = TelegramClient(client_cfg, handler=_placeholder_handler)
         
         # Run async send_message in event loop
-        result = asyncio.run(client.send_message(user_id, text))
+        result = asyncio.run(client.send_message(user_id, final_message))
+        
+        # Extend result with LLM metadata if applicable
+        if llm_completion and llm_response_text:
+            result["llm_response"] = llm_response_text
+            result["llm_model"] = llm_model_used
         
         # Output result as JSON for cron integration
         console.print(json.dumps(result, indent=2))

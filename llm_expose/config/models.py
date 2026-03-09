@@ -45,6 +45,10 @@ class TelegramClientConfig(BaseModel):
         default=None,
         description="Custom system prompt for this channel. Falls back to default when omitted.",
     )
+    model_name: Optional[str] = Field(
+        default=None,
+        description="Default LLM model name for this channel (used with --llm-completion)",
+    )
 
     @field_validator("bot_token")
     @classmethod
@@ -72,6 +76,15 @@ class TelegramClientConfig(BaseModel):
     @classmethod
     def normalize_system_prompt(cls, value: Optional[str]) -> Optional[str]:
         """Normalize optional channel system prompt by trimming outer whitespace."""
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("model_name")
+    @classmethod
+    def normalize_model_name(cls, value: Optional[str]) -> Optional[str]:
+        """Normalize optional model name by trimming outer whitespace."""
         if value is None:
             return None
         normalized = value.strip()
