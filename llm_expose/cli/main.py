@@ -8,7 +8,6 @@ import logging
 from typing import Optional
 
 import typer
-from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -55,15 +54,13 @@ app = typer.Typer(
 )
 
 # Subcommands for 'add' and 'delete'
-add_app = typer.Typer(help="Add model or channel configurations")
-delete_app = typer.Typer(help="Delete model or channel configurations")
-list_app = typer.Typer(help="List saved models or channels")
-mcp_app = typer.Typer(help="Manage MCP server integrations and settings")
+add_app = typer.Typer(help="Add model, channel, or MCP server configurations")
+delete_app = typer.Typer(help="Delete model, channel, or MCP server configurations")
+list_app = typer.Typer(help="List saved models, channels, or MCP servers")
 
 app.add_typer(add_app, name="add")
 app.add_typer(delete_app, name="delete")
 app.add_typer(list_app, name="list")
-app.add_typer(mcp_app, name="mcp")
 
 console = Console()
 
@@ -397,7 +394,8 @@ def list_channels_cmd() -> None:
 # ---------------------------------------------------------------------------
 
 
-@mcp_app.command("list")
+@list_app.command("mcp")
+@list_app.command("mcps")
 def list_mcp_cmd() -> None:
     """List all configured MCP servers and global MCP settings."""
     settings = load_mcp_settings()
@@ -442,7 +440,7 @@ def list_mcp_cmd() -> None:
     console.print(table)
 
 
-@mcp_app.command("add")
+@add_app.command("mcp")
 def add_mcp_cmd() -> None:
     """Add or update an MCP server configuration."""
     _print_banner()
@@ -502,7 +500,7 @@ def add_mcp_cmd() -> None:
     )
 
 
-@mcp_app.command("delete")
+@delete_app.command("mcp")
 def delete_mcp_cmd(
     name: Optional[str] = typer.Argument(None, help="Name of the MCP server to delete"),
 ) -> None:
@@ -537,42 +535,6 @@ def delete_mcp_cmd(
         raise typer.Exit(code=1) from exc
 
     console.print(f"\n[bold green]✓ MCP server '{name}' deleted successfully.[/bold green]\n")
-
-
-@mcp_app.command("mode")
-def mcp_mode_cmd(
-    mode: Optional[str] = typer.Argument(
-        None,
-        help="Confirmation mode for tool calls: required or optional",
-    ),
-) -> None:
-    """Show or set MCP confirmation mode.
-
-    Examples:
-        llm-expose mcp mode
-        llm-expose mcp mode optional
-        llm-expose mcp mode required
-    """
-    settings = load_mcp_settings()
-    if mode is None:
-        console.print(
-            f"[bold cyan]Current MCP confirmation mode:[/bold cyan] {settings.confirmation_mode}"
-        )
-        return
-
-    normalized = mode.strip().lower()
-    if normalized not in {"required", "optional"}:
-        console.print("[red]Invalid mode. Use 'required' or 'optional'.[/red]")
-        raise typer.Exit(code=1)
-
-    updated_settings = MCPSettingsConfig(
-        confirmation_mode=normalized,
-        tool_timeout_seconds=settings.tool_timeout_seconds,
-    )
-    save_mcp_settings(updated_settings)
-    console.print(
-        f"[bold green]✓ MCP confirmation mode updated to '{normalized}'.[/bold green]"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +652,11 @@ def start() -> None:
     summary_table.add_row("Client Type", client_cfg.client_type)
     summary_table.add_row("System Prompt", system_prompt if system_prompt else "[dim]default[/dim]")
     console.print(summary_table)
+
+    # ---- Configure MCP settings if servers exist ----------------------
+    mcp_servers = list_mcp_servers()
+    if mcp_servers:
+        console.print(f"\n[bold cyan]Detected {len(mcp_servers)} MCP server(s) configured.[/bold cyan]")        
 
     if not Confirm.ask("\n[bold]Start the service?[/bold]"):
         console.print("[yellow]Cancelled.[/yellow]")

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import litellm
 from openai import AsyncOpenAI
 
 from llm_expose.config.models import ProviderConfig
-from llm_expose.providers.base import BaseProvider
+from llm_expose.providers.base import BaseProvider, Message, ToolChoice, ToolSpec
 
 
 class LiteLLMProvider(BaseProvider):
@@ -66,7 +66,59 @@ class LiteLLMProvider(BaseProvider):
             kwargs["api_key"] = self._config.api_key
         return kwargs
 
-    async def complete(self, messages: list[dict[str, str]]) -> str:
+    @staticmethod
+    def _message_to_dict(message: Any) -> Message:
+        """Normalize provider message objects into plain dicts."""
+        if isinstance(message, dict):
+            return message
+        model_dump = getattr(message, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump(exclude_none=True)
+            if isinstance(dumped, dict):
+                return dumped
+        return {
+            "role": getattr(message, "role", "assistant"),
+            "content": getattr(message, "content", ""),
+            "tool_calls": getattr(message, "tool_calls", None),
+        }
+
+    async def complete_with_message(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        tool_choice: ToolChoice | None = None,
+    ) -> Message:
+        """Return the full assistant message payload for tool-call handling."""
+        request_kwargs: dict[str, Any] = {}
+        if tools is not None:
+            request_kwargs["tools"] = tools
+        if tool_choice is not None:
+            request_kwargs["tool_choice"] = tool_choice
+
+        if self._is_local_provider():
+            assert self._openai_client is not None
+            response = await self._openai_client.chat.completions.create(
+                model=self._local_model_id(),
+                messages=messages,
+                **request_kwargs,
+            )
+            return self._message_to_dict(response.choices[0].message)
+
+        response = await litellm.acompletion(
+            messages=messages,
+            **request_kwargs,
+            **self._common_kwargs(),
+        )
+        return self._message_to_dict(response.choices[0].message)
+
+    async def complete(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        tool_choice: ToolChoice | None = None,
+    ) -> str:
         """Return a single completion from the configured model.
 
         Args:
@@ -78,21 +130,20 @@ class LiteLLMProvider(BaseProvider):
         Raises:
             litellm.exceptions.APIError: On provider-level errors.
         """
-        if self._is_local_provider():
-            assert self._openai_client is not None
-            response = await self._openai_client.chat.completions.create(
-                model=self._local_model_id(),
-                messages=messages,
-            )
-            return response.choices[0].message.content or ""
-
-        response = await litellm.acompletion(
-            messages=messages,
-            **self._common_kwargs(),
+        assistant_message = await self.complete_with_message(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
         )
-        return response.choices[0].message.content or ""
+        return assistant_message.get("content") or ""
 
-    async def stream(self, messages: list[dict[str, str]]) -> AsyncIterator[str]:
+    async def stream(
+        self,
+        messages: list[Message],
+        *,
+        tools: list[ToolSpec] | None = None,
+        tool_choice: ToolChoice | None = None,
+    ) -> AsyncIterator[str]:
         """Yield text chunks from a streaming completion.
 
         Args:
@@ -101,12 +152,19 @@ class LiteLLMProvider(BaseProvider):
         Yields:
             Text delta strings as they are received from the model.
         """
+        request_kwargs: dict[str, Any] = {}
+        if tools is not None:
+            request_kwargs["tools"] = tools
+        if tool_choice is not None:
+            request_kwargs["tool_choice"] = tool_choice
+
         if self._is_local_provider():
             assert self._openai_client is not None
             response = await self._openai_client.chat.completions.create(
                 model=self._local_model_id(),
                 messages=messages,
                 stream=True,
+                **request_kwargs,
             )
             async for chunk in response:
                 delta = chunk.choices[0].delta.content
@@ -117,6 +175,7 @@ class LiteLLMProvider(BaseProvider):
         response = await litellm.acompletion(
             messages=messages,
             stream=True,
+            **request_kwargs,
             **self._common_kwargs(),
         )
         async for chunk in response:

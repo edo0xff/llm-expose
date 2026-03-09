@@ -10,6 +10,9 @@ from llm_expose.clients.base import BaseClient
 from llm_expose.clients.telegram import TelegramClient
 from llm_expose.config.models import (
     ExposureConfig,
+    MCPConfig,
+    MCPServerConfig,
+    MCPSettingsConfig,
     ProviderConfig,
     TelegramClientConfig,
 )
@@ -156,7 +159,8 @@ class TestOrchestrator:
         client = MagicMock()
         client.start = AsyncMock()
         client.stop = AsyncMock()
-        orch = Orchestrator(config=config, provider=provider, client=client)
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()):
+            orch = Orchestrator(config=config, provider=provider, client=client)
         return orch, provider, client
 
     @pytest.mark.asyncio
@@ -207,3 +211,340 @@ class TestOrchestrator:
             await orch.run()
 
         client.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_message_passes_mcp_tools_to_provider(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="MCP reply")
+        provider.complete_with_message = AsyncMock(
+            side_effect=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "mcp_server__search_docs",
+                                "arguments": '{"query":"2+2"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "MCP reply"},
+            ]
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="optional"),
+            servers=[
+                MCPServerConfig(
+                    name="remote-mcp",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    allowed_tools=["mcp_server__search_docs"],
+                    enabled=True,
+                )
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_server__search_docs",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        reply = await orch._handle_message("Use MCP")
+        assert reply == "MCP reply"
+        fake_runtime.initialize.assert_awaited_once()
+        fake_runtime.execute_tool_call.assert_awaited_once()
+        assert provider.complete_with_message.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_handle_message_skips_disabled_or_invalid_mcp_servers(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="No tools reply")
+        provider.complete_with_message = AsyncMock(
+            return_value={
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_required",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp_server__search_docs",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            }
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="required"),
+            servers=[
+                MCPServerConfig(
+                    name="disabled",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    enabled=False,
+                ),
+                MCPServerConfig(
+                    name="missing-url",
+                    transport="stdio",
+                    command="npx",
+                    enabled=True,
+                ),
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_server__search_docs",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        reply = await orch._handle_message("Hello")
+        assert "requires confirmation" in reply
+        provider.complete.assert_not_awaited()
+        fake_runtime.execute_tool_call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_required_mode_approve_executes_pending_tool_calls(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="fallback")
+        provider.complete_with_message = AsyncMock(
+            side_effect=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "mcp_server__search_docs",
+                                "arguments": '{"query":"weather"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "approved final"},
+            ]
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="required"),
+            servers=[
+                MCPServerConfig(
+                    name="remote-mcp",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    allowed_tools=["mcp_server__search_docs"],
+                    enabled=True,
+                )
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_server__search_docs",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        prompt = await orch._handle_message("42", "Use MCP")
+        assert "requires confirmation" in prompt
+        approval_id = prompt.split("id: ")[1].split(")")[0]
+
+        final = await orch._handle_message("42", f"approve {approval_id}")
+        assert final == "approved final"
+        fake_runtime.execute_tool_call.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_required_mode_reject_skips_tool_execution(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="rejection handled")
+        provider.complete_with_message = AsyncMock(
+            return_value={
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_3",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp_server__search_docs",
+                            "arguments": '{"query":"news"}',
+                        },
+                    }
+                ],
+            }
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="required"),
+            servers=[
+                MCPServerConfig(
+                    name="remote-mcp",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    allowed_tools=["mcp_server__search_docs"],
+                    enabled=True,
+                )
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_server__search_docs",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        prompt = await orch._handle_message("42", "Use MCP")
+        approval_id = prompt.split("id: ")[1].split(")")[0]
+
+        final = await orch._handle_message("42", f"reject {approval_id}")
+        assert final == "rejection handled"
+        fake_runtime.execute_tool_call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_pending_approval_blocks_new_messages_until_decision(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="fallback")
+        provider.complete_with_message = AsyncMock(
+            return_value={
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_4",
+                        "type": "function",
+                        "function": {"name": "mcp_server__search_docs", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="required"),
+            servers=[
+                MCPServerConfig(
+                    name="remote-mcp",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    enabled=True,
+                )
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_server__search_docs",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        await orch._handle_message("42", "Use MCP")
+        blocked = await orch._handle_message("42", "another question")
+        assert "waiting for confirmation" in blocked

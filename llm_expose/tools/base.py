@@ -7,13 +7,15 @@ from typing import Any
 
 
 class BaseTool(ABC):
-    """Interface for optional LLM function/tool calling support.
+    """Legacy interface for optional local tool execution.
 
-    Concrete subclasses represent callable tools that can be exposed to the
-    LLM via its function-calling API (e.g. OpenAI's ``tools`` parameter).
+    Concrete subclasses represent callable tools executed inside this
+    application. The current production path uses LiteLLM MCP tools directly,
+    so this interface is kept primarily for backward compatibility and future
+    local-only integrations.
 
-    TODO: Implement concrete tool examples (e.g. web search, calculator).
-    TODO: Integrate tool execution into the orchestrator message loop.
+    TODO: Remove once local tool execution is either fully implemented or
+        formally deprecated across public API/docs.
     """
 
     @property

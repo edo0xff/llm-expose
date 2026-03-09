@@ -51,7 +51,7 @@ class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server integration."""
 
     name: str = Field(description="Unique MCP server name")
-    transport: Literal["stdio", "sse"] = Field(
+    transport: Literal["stdio", "sse", "http"] = Field(
         default="stdio", description="Transport type used to connect to the MCP server"
     )
     command: Optional[str] = Field(
@@ -69,6 +69,10 @@ class MCPServerConfig(BaseModel):
     env: dict[str, str] = Field(
         default_factory=dict,
         description="Environment variables passed to the MCP server process",
+    )
+    allowed_tools: list[str] = Field(
+        default_factory=list,
+        description="Optional allow-list of MCP tool names available to the model",
     )
     enabled: bool = Field(default=True, description="Whether this server is enabled")
 

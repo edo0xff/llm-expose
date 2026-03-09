@@ -126,6 +126,56 @@ class TestComplete:
             assert result == "local reply"
             mock_client.chat.completions.create.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_complete_passes_tools_and_tool_choice_to_litellm(self) -> None:
+        cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
+        provider = LiteLLMProvider(cfg)
+        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "Tool-backed reply"
+
+        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)) as mocked_completion:
+            result = await provider.complete(
+                [{"role": "user", "content": "Hi"}],
+                tools=tools,
+                tool_choice="required",
+            )
+
+        assert result == "Tool-backed reply"
+        mocked_completion.assert_awaited_once()
+        called_kwargs = mocked_completion.await_args.kwargs
+        assert called_kwargs["tools"] == tools
+        assert called_kwargs["tool_choice"] == "required"
+
+    @pytest.mark.asyncio
+    async def test_complete_local_passes_tools_and_tool_choice(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="local",
+            model="llama3",
+            base_url="http://localhost:1234/v1",
+        )
+        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "local tool reply"
+
+        with patch("llm_expose.providers.litellm_provider.AsyncOpenAI") as mock_openai:
+            mock_client = mock_openai.return_value
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+            provider = LiteLLMProvider(cfg)
+            result = await provider.complete(
+                [{"role": "user", "content": "Hi"}],
+                tools=tools,
+                tool_choice="required",
+            )
+
+            assert result == "local tool reply"
+            called_kwargs = mock_client.chat.completions.create.await_args.kwargs
+            assert called_kwargs["tools"] == tools
+            assert called_kwargs["tool_choice"] == "required"
+
 
 class TestStream:
     @pytest.mark.asyncio
@@ -190,3 +240,62 @@ class TestStream:
 
             assert chunks == ["local", " ", "stream"]
             mock_client.chat.completions.create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_passes_tools_and_tool_choice_to_litellm(self) -> None:
+        cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
+        provider = LiteLLMProvider(cfg)
+        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+
+        async def _mock_stream():
+            for token in ["A", "B"]:
+                chunk = MagicMock()
+                chunk.choices[0].delta.content = token
+                yield chunk
+
+        with patch("litellm.acompletion", new=AsyncMock(return_value=_mock_stream())) as mocked_completion:
+            chunks = []
+            async for chunk in provider.stream(
+                [{"role": "user", "content": "Hi"}],
+                tools=tools,
+                tool_choice="required",
+            ):
+                chunks.append(chunk)
+
+        assert chunks == ["A", "B"]
+        called_kwargs = mocked_completion.await_args.kwargs
+        assert called_kwargs["tools"] == tools
+        assert called_kwargs["tool_choice"] == "required"
+
+    @pytest.mark.asyncio
+    async def test_stream_local_passes_tools_and_tool_choice(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="local",
+            model="llama3",
+            base_url="http://localhost:1234/v1",
+        )
+        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+
+        async def _mock_stream():
+            for token in ["local", "-", "tool"]:
+                chunk = MagicMock()
+                chunk.choices[0].delta.content = token
+                yield chunk
+
+        with patch("llm_expose.providers.litellm_provider.AsyncOpenAI") as mock_openai:
+            mock_client = mock_openai.return_value
+            mock_client.chat.completions.create = AsyncMock(return_value=_mock_stream())
+
+            provider = LiteLLMProvider(cfg)
+            chunks = []
+            async for chunk in provider.stream(
+                [{"role": "user", "content": "Hi"}],
+                tools=tools,
+                tool_choice="required",
+            ):
+                chunks.append(chunk)
+
+            assert chunks == ["local", "-", "tool"]
+            called_kwargs = mock_client.chat.completions.create.await_args.kwargs
+            assert called_kwargs["tools"] == tools
+            assert called_kwargs["tool_choice"] == "required"

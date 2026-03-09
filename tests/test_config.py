@@ -107,6 +107,15 @@ class TestMCPConfig:
         assert settings.confirmation_mode == "optional"
         assert settings.tool_timeout_seconds == 30
 
+    def test_server_allows_tool_allowlist(self) -> None:
+        cfg = MCPServerConfig(
+            name="remote",
+            transport="sse",
+            url="http://localhost:3000/sse",
+            allowed_tools=["search_docs"],
+        )
+        assert cfg.allowed_tools == ["search_docs"]
+
 
 # ---------------------------------------------------------------------------
 # Loader tests
@@ -213,6 +222,15 @@ class TestMCPLoader:
         save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
         save_mcp_server(MCPServerConfig(name="db", transport="sse", url="http://localhost:3000/sse"))
         assert list_mcp_servers() == ["db", "web"]
+
+    def test_http_transport_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that HTTP transport is properly supported in MCP server config."""
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_server(MCPServerConfig(name="http-server", transport="http", url="http://localhost:8080/mcp"))
+        server = get_mcp_server("http-server")
+        assert server.transport == "http"
+        assert server.url == "http://localhost:8080/mcp"
+        assert list_mcp_servers() == ["http-server"]
 
     def test_get_server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
