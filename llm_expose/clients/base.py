@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Callable, Coroutine, Any
 
+@dataclass
+class MessageResponse:
+    """Structured response that can include approval metadata for interactive UI.
+    
+    Attributes:
+        content: The text message to display to the user.
+        approval_id: Optional approval ID for tool execution confirmation.
+        tool_names: Optional list of tool names requiring approval.
+        server_names: Optional mapping of tool names to server names.
+    """
+    content: str
+    approval_id: str | None = None
+    tool_names: list[str] | None = None
+    server_names: dict[str, str] | None = None
+
+
 # Backward-compatible handler signature support:
-# - Legacy: handler(user_message)
-# - New: handler(channel_id, user_message)
-MessageHandler = Callable[..., Coroutine[Any, Any, str]]
+# - Legacy: handler(user_message) -> str
+# - New: handler(channel_id, user_message) -> str | MessageResponse
+MessageHandler = Callable[..., Coroutine[Any, Any, str | MessageResponse]]
 
 
 class BaseClient(ABC):

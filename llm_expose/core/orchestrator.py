@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from llm_expose.clients.base import BaseClient
+from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.config.loader import load_mcp_config
 from llm_expose.config.models import ExposureConfig, MCPSettingsConfig
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
@@ -145,7 +145,7 @@ class Orchestrator:
 
     async def _handle_message(
         self, channel_or_message: str, user_message: str | None = None
-    ) -> str:
+    ) -> str | MessageResponse:
         """Process a single user message and return the LLM's reply.
 
         Appends the user message to the channel's history, calls the provider,
@@ -157,7 +157,7 @@ class Orchestrator:
             user_message: Raw text from the end user when channel ID is passed.
 
         Returns:
-            The LLM's reply as a plain string.
+            The LLM's reply as a plain string or MessageResponse with approval metadata.
         """
         if user_message is None:
             channel_id = self._default_channel_id
@@ -280,8 +280,9 @@ class Orchestrator:
         )
         return self._format_approval_prompt(approval_id, tool_calls, server_names)
 
-    def _format_approval_prompt(self, approval_id: str, tool_calls: list[Any], server_names: dict[str, str] | None = None) -> str:
+    def _format_approval_prompt(self, approval_id: str, tool_calls: list[Any], server_names: dict[str, str] | None = None) -> MessageResponse:
         tool_info: list[str] = []
+        tool_names: list[str] = []
         for call in tool_calls:
             function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
             if isinstance(function_obj, dict):
@@ -289,6 +290,7 @@ class Orchestrator:
             else:
                 name = getattr(function_obj, "name", None)
             tool_name = str(name or "unknown_tool")
+            tool_names.append(tool_name)
             
             # Add server name if available
             if server_names and tool_name in server_names:
@@ -297,10 +299,16 @@ class Orchestrator:
                 tool_info.append(tool_name)
 
         names = ", ".join(tool_info)
-        return (
+        content = (
             f"Tool execution requires confirmation (id: {approval_id}).\n"
             f"Requested tool(s): {names}\n"
             f"Reply `approve {approval_id}` to continue or `reject {approval_id}` to cancel."
+        )
+        return MessageResponse(
+            content=content,
+            approval_id=approval_id,
+            tool_names=tool_names,
+            server_names=server_names or {}
         )
 
     async def _handle_message_with_mixed_approval(

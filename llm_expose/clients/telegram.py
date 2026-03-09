@@ -5,10 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from llm_expose.clients.base import BaseClient, MessageHandler as LLMHandler
+from llm_expose.clients.base import BaseClient, MessageHandler as LLMHandler, MessageResponse
 from llm_expose.config.models import TelegramClientConfig
 
 logger = logging.getLogger(__name__)
@@ -79,7 +86,92 @@ class TelegramClient(BaseClient):
             logger.exception("Error from LLM handler: %s", exc)
             reply = "⚠️ Sorry, I encountered an error. Please try again."
 
-        await update.message.reply_text(reply)
+        # Check if reply is a structured MessageResponse with approval metadata
+        if isinstance(reply, MessageResponse):
+            if reply.approval_id:
+                # Create inline keyboard with Approve/Reject buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "✅ Approve",
+                            callback_data=f"approve:{reply.approval_id}"
+                        ),
+                        InlineKeyboardButton(
+                            "❌ Reject",
+                            callback_data=f"reject:{reply.approval_id}"
+                        ),
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(reply.content, reply_markup=reply_markup)
+            else:
+                # No approval needed, just send the content
+                await update.message.reply_text(reply.content)
+        else:
+            # Plain string response (backward compatibility)
+            await update.message.reply_text(reply)
+
+    async def _handle_callback_query(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle button press callbacks for approval decisions."""
+        if not update.callback_query:
+            return
+
+        query = update.callback_query
+        chat_id = str(query.message.chat.id) if query.message else None
+        
+        if not chat_id or not query.data:
+            await query.answer("Invalid request.")
+            return
+
+        # Parse callback data: format is "approve:approval_id" or "reject:approval_id"
+        try:
+            decision, approval_id = query.data.split(":", 1)
+        except ValueError:
+            await query.answer("Invalid callback data.")
+            return
+
+        if decision not in ("approve", "reject"):
+            await query.answer("Unknown action.")
+            return
+
+        # Answer the callback query immediately to remove button loading state
+        await query.answer("Processing...")
+
+        # Format as text command and send to orchestrator
+        command_text = f"{decision} {approval_id}"
+        logger.info(
+            "Button press from user %s in chat %s: %s",
+            update.effective_user,
+            chat_id,
+            command_text,
+        )
+
+        try:
+            bound_self = getattr(self._handler, "__self__", None)
+            if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
+                reply = await self._handler(chat_id, command_text)
+            else:
+                reply = await self._handler(command_text)
+        except Exception as exc:
+            logger.exception("Error from LLM handler during callback: %s", exc)
+            reply = "⚠️ Sorry, I encountered an error processing your decision."
+
+        # Extract content if reply is MessageResponse
+        reply_text = reply.content if isinstance(reply, MessageResponse) else reply
+
+        # Edit the original message to show the decision and result
+        decision_emoji = "✅" if decision == "approve" else "❌"
+        status_message = f"{decision_emoji} {decision.capitalize()}d\n\n{reply_text}"
+        
+        if query.message:
+            try:
+                await query.edit_message_text(status_message)
+            except Exception as exc:
+                # If editing fails (e.g., message too old), send a new message
+                logger.warning("Could not edit message: %s", exc)
+                await context.bot.send_message(chat_id=chat_id, text=status_message)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -98,6 +190,7 @@ class TelegramClient(BaseClient):
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
+        self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
 
         logger.info("Starting Telegram bot (polling)…")
         await self._app.initialize()
