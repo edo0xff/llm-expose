@@ -14,6 +14,7 @@ from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.config.loader import get_pairs_for_channel, load_mcp_config
 from llm_expose.config.models import ExposureConfig, MCPSettingsConfig
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
+from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.base import BaseProvider, Message, ToolChoice, ToolSpec
 
 logger = logging.getLogger(__name__)
@@ -535,27 +536,20 @@ class Orchestrator:
         history: list[Message],
         tools: list[ToolSpec],
     ) -> str:
-        max_tool_rounds = 8
-
-        for _ in range(max_tool_rounds):
-            assistant_message = await self._provider_complete_message(
-                history,
-                tools=tools,
-                tool_choice=self._tool_choice,
-            )
-            history.append(assistant_message)
-
-            tool_calls = assistant_message.get("tool_calls") or []
-            if not tool_calls:
-                return str(assistant_message.get("content") or "")
-
-            if self._mcp_runtime is None:
-                return "MCP runtime unavailable while handling tool calls."
-            await self._execute_tool_calls(history, tool_calls)
-
-        fallback = "Tool execution exceeded maximum rounds; stopping to avoid infinite loop."
-        history.append({"role": "assistant", "content": fallback})
-        return fallback
+        """Handle message with auto-execute tools (no approval).
+        
+        Delegates to ToolAwareCompletion for reusable tool handling.
+        """
+        if self._mcp_runtime is None:
+            return "MCP runtime unavailable while handling tool calls."
+        
+        # Use ToolAwareCompletion with existing runtime
+        async with ToolAwareCompletion(
+            provider=self._provider,
+            mcp_runtime=self._mcp_runtime,
+            timeout_seconds=self._mcp_settings.tool_timeout_seconds,
+        ) as handler:
+            return await handler.complete(history, max_rounds=8)
 
     @staticmethod
     def _tool_call_id(tool_call: Any) -> str:

@@ -17,8 +17,6 @@ from rich.table import Table
 from rich.text import Text
 from telegram.error import Conflict
 
-from litellm import validate_environment, models_by_provider
-
 from llm_expose.config import (
     MCPServerConfig,
     MCPSettingsConfig,
@@ -36,6 +34,7 @@ from llm_expose.config import (
     list_models,
     list_pairs,
     load_channel,
+    load_mcp_config,
     load_mcp_settings,
     load_model,
     save_channel,
@@ -45,6 +44,7 @@ from llm_expose.config import (
 )
 from llm_expose.config.models import ExposureConfig
 from llm_expose.core.orchestrator import Orchestrator
+from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.litellm_provider import LiteLLMProvider
 from llm_expose.clients.telegram import TelegramClient
 from llm_expose.clients.base import BaseClient
@@ -231,6 +231,8 @@ def add_model() -> None:
     )
 
     if provider_type.startswith("Online"):
+        from litellm import validate_environment, models_by_provider
+        
         online_provider = _select_from_list(
             "Select online provider:",
             list(models_by_provider.keys()),
@@ -1036,14 +1038,41 @@ def message(
         # Call LLM to generate response
         try:
             provider = LiteLLMProvider(provider_cfg)
-            llm_response_text = asyncio.run(
-                provider.complete(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": text},
-                    ]
+            
+            # Check if MCP servers are configured for tool-aware completion
+            if client_cfg.mcp_servers:
+                # Tool-aware completion with MCP
+                try:
+                    mcp_config = load_mcp_config()
+                    async def _tool_aware_complete():
+                        async with ToolAwareCompletion(
+                            provider=provider,
+                            mcp_config=mcp_config,
+                            requested_servers=client_cfg.mcp_servers,
+                            timeout_seconds=30,
+                        ) as handler:
+                            return await handler.complete(
+                                messages=[
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": text},
+                                ]
+                            )
+                    llm_response_text = asyncio.run(_tool_aware_complete())
+                except Exception as exc:
+                    console.print(f"[red]Error: Tool-aware completion failed: {exc}[/red]")
+                    logger.exception("Tool-aware completion error")
+                    raise typer.Exit(code=1)
+            else:
+                # Simple completion without tools
+                llm_response_text = asyncio.run(
+                    provider.complete(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": text},
+                        ]
+                    )
                 )
-            )
+            
             llm_model_used = client_cfg.model_name
             final_message = llm_response_text
             logger.info(
