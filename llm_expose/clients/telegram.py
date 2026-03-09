@@ -210,7 +210,8 @@ class TelegramClient(BaseClient):
 
         # Edit the original message to show the decision and result
         decision_emoji = "✅" if decision == "approve" else "❌"
-        status_message = f"{decision_emoji} Tool execution: {decision}d\n\n{reply_text}"
+        decision_text = "approved" if decision == "approve" else "rejected"
+        status_message = f"{decision_emoji} Tool execution: {decision_text}\n\n{reply_text}"
         
         if query.message:
             try:

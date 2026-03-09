@@ -6,7 +6,10 @@ from unittest.mock import patch
 from pathlib import Path
 
 from llm_expose.cli.main import (
+    add_pair_cmd,
     add_channel,
+    delete_pair_cmd,
+    list_pairs_cmd,
     _parse_multi_select_numbers,
     _select_mcp_servers_for_channel,
 )
@@ -80,3 +83,45 @@ class TestCliHelpers:
 
         saved_cfg = save_channel_mock.call_args.args[1]
         assert saved_cfg.system_prompt == "Channel prompt"
+
+    def test_add_pair_cmd_with_args(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
+            "llm_expose.cli.main.add_channel_pair"
+        ) as add_pair_mock:
+            add_pair_cmd("42", channel="telegram-main")
+
+        add_pair_mock.assert_called_once_with("telegram-main", "42")
+
+    def test_add_pair_cmd_prompts_for_pair_id_when_missing(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
+            "llm_expose.cli.main.Prompt.ask", return_value="84"
+        ), patch("llm_expose.cli.main.add_channel_pair") as add_pair_mock:
+            add_pair_cmd(None, channel="telegram-main")
+
+        add_pair_mock.assert_called_once_with("telegram-main", "84")
+
+    def test_list_pairs_cmd_shows_configured_pairs(self) -> None:
+        with patch("llm_expose.cli.main.list_pairs", return_value={"telegram-main": ["42"]}), patch(
+            "llm_expose.cli.main.console.print"
+        ) as print_mock:
+            list_pairs_cmd(channel=None)
+
+        assert print_mock.called
+
+    def test_delete_pair_cmd_with_args(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
+            "llm_expose.cli.main.delete_channel_pair"
+        ) as delete_pair_mock:
+            delete_pair_cmd("42", channel="telegram-main")
+
+        delete_pair_mock.assert_called_once_with("telegram-main", "42")
+
+    def test_delete_pair_cmd_selects_pair_when_missing(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
+            "llm_expose.cli.main.get_pairs_for_channel", return_value=["42", "84"]
+        ), patch("llm_expose.cli.main._select_from_list", return_value="84"), patch(
+            "llm_expose.cli.main.delete_channel_pair"
+        ) as delete_pair_mock:
+            delete_pair_cmd(None, channel="telegram-main")
+
+        delete_pair_mock.assert_called_once_with("telegram-main", "84")

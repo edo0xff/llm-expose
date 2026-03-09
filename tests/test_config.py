@@ -15,13 +15,17 @@ from llm_expose.config.models import (
     TelegramClientConfig,
 )
 from llm_expose.config.loader import (
+    add_pair,
     delete_model,
     delete_channel,
+    delete_pair,
     delete_mcp_server,
+    get_pairs_for_channel,
     get_mcp_server,
     list_models,
     list_channels,
     list_mcp_servers,
+    list_pairs,
     load_model,
     load_channel,
     load_mcp_settings,
@@ -345,3 +349,37 @@ class TestMCPLoader:
         settings = load_mcp_settings()
         assert settings.confirmation_mode == "required"
         assert settings.tool_timeout_seconds == 45
+
+
+class TestPairLoader:
+    def test_list_pairs_defaults_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        assert list_pairs() == {}
+
+    def test_add_pair_and_get_pairs_for_channel(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        add_pair("telegram-main", "42")
+        add_pair("telegram-main", "84")
+        add_pair("telegram-main", "42")  # duplicate ignored
+
+        assert get_pairs_for_channel("telegram-main") == ["42", "84"]
+
+    def test_list_pairs_can_filter_channel(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        add_pair("alpha", "1")
+        add_pair("beta", "2")
+
+        assert list_pairs("alpha") == {"alpha": ["1"]}
+        assert list_pairs("missing") == {"missing": []}
+
+    def test_delete_pair_removes_channel_when_last_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        add_pair("telegram-main", "42")
+        delete_pair("telegram-main", "42")
+        assert list_pairs() == {}
+
+    def test_delete_missing_pair_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        add_pair("telegram-main", "42")
+        with pytest.raises(FileNotFoundError):
+            delete_pair("telegram-main", "999")

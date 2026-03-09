@@ -160,6 +160,40 @@ class MCPConfig(BaseModel):
     servers: list[MCPServerConfig] = Field(default_factory=list)
 
 
+class PairingsConfig(BaseModel):
+    """Top-level pairing configuration persisted on disk.
+
+    Pair IDs are stored by channel config name so each configured channel can
+    have an independent allowlist of sender/channel identifiers.
+    """
+
+    pairs_by_channel: dict[str, list[str]] = Field(default_factory=dict)
+
+    @field_validator("pairs_by_channel")
+    @classmethod
+    def normalize_pairs_by_channel(
+        cls, values: dict[str, list[str]]
+    ) -> dict[str, list[str]]:
+        """Trim and deduplicate channel names and pair IDs."""
+        normalized: dict[str, list[str]] = {}
+        for raw_channel_name, raw_pair_ids in values.items():
+            channel_name = raw_channel_name.strip()
+            if not channel_name:
+                continue
+
+            cleaned_ids: list[str] = []
+            seen_ids: set[str] = set()
+            for raw_pair_id in raw_pair_ids:
+                pair_id = raw_pair_id.strip()
+                if not pair_id or pair_id in seen_ids:
+                    continue
+                seen_ids.add(pair_id)
+                cleaned_ids.append(pair_id)
+
+            normalized[channel_name] = cleaned_ids
+        return normalized
+
+
 # TODO: Add DiscordClientConfig when Discord client is implemented
 # TODO: Add SlackClientConfig when Slack client is implemented
 
@@ -173,6 +207,10 @@ class ExposureConfig(BaseModel):
     """Top-level configuration for a single LLM exposure."""
 
     name: str = Field(description="Unique name for this exposure configuration")
+    channel_name: Optional[str] = Field(
+        default=None,
+        description="Selected saved channel config name used for pair scoping.",
+    )
     provider: ProviderConfig = Field(description="LLM provider settings")
     client: TelegramClientConfig = Field(description="Messaging client settings")
 
@@ -194,3 +232,12 @@ class ExposureConfig(BaseModel):
                 f"Exposure name contains forbidden characters: {forbidden}"
             )
         return stripped
+
+    @field_validator("channel_name")
+    @classmethod
+    def normalize_channel_name(cls, value: Optional[str]) -> Optional[str]:
+        """Normalize optional channel namespace by trimming whitespace."""
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None

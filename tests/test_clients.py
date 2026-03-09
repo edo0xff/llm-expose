@@ -201,6 +201,108 @@ class TestOrchestrator:
         assert reply == "The answer is 42."
 
     @pytest.mark.asyncio
+    async def test_handle_message_blocks_unpaired_channel(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="telegram-main",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="The answer is 42.")
+        client = MagicMock()
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["100"]
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+            reply = await orch._handle_message("42", "Hello")
+
+        assert reply == "This instance is not paired. Run llm-expose add pair 42"
+        provider.complete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handle_message_recognizes_pair_added_without_restart(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="telegram-main",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="The answer is 42.")
+        client = MagicMock()
+
+        channel_pairs: list[str] = []
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.get_pairs_for_channel",
+            side_effect=lambda channel_name: list(channel_pairs),
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+            blocked = await orch._handle_message("42", "Hello")
+            assert blocked == "This instance is not paired. Run llm-expose add pair 42"
+            provider.complete.assert_not_awaited()
+
+            channel_pairs.append("42")
+
+            allowed = await orch._handle_message("42", "Hello again")
+            assert allowed == "The answer is 42."
+            provider.complete.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_message_blocks_pair_removed_without_restart(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="telegram-main",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="The answer is 42.")
+        client = MagicMock()
+
+        channel_pairs = ["42"]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.get_pairs_for_channel",
+            side_effect=lambda channel_name: list(channel_pairs),
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+            allowed = await orch._handle_message("42", "Hello")
+            assert allowed == "The answer is 42."
+            provider.complete.assert_awaited_once()
+
+            channel_pairs.clear()
+
+            blocked = await orch._handle_message("42", "Hello after removal")
+            assert blocked == "This instance is not paired. Run llm-expose add pair 42"
+            assert provider.complete.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_handle_message_allows_paired_channel(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="telegram-main",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="The answer is 42.")
+        client = MagicMock()
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+            reply = await orch._handle_message("42", "Hello")
+
+        assert reply == "The answer is 42."
+        provider.complete.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_history_grows_with_turns(self) -> None:
         orch, provider, _ = self._make_orchestrator()
         # Initial history has only the system message

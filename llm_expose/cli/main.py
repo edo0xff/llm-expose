@@ -22,13 +22,17 @@ from llm_expose.config import (
     MCPSettingsConfig,
     ProviderConfig,
     TelegramClientConfig,
+    add_pair as add_channel_pair,
     delete_channel,
+    delete_pair as delete_channel_pair,
     delete_mcp_server,
     delete_model,
+    get_pairs_for_channel,
     get_mcp_server,
     list_channels,
     list_mcp_servers,
     list_models,
+    list_pairs,
     load_channel,
     load_mcp_settings,
     load_model,
@@ -170,6 +174,25 @@ def _select_mcp_servers_for_channel(options: list[str]) -> list[str]:
             continue
 
         return [options[index - 1] for index in selected_indexes]
+
+
+def _resolve_channel_name_for_pairs(channel_name: Optional[str]) -> str:
+    """Resolve the channel config name used for pair CRUD commands."""
+    channels = list_channels()
+    if not channels:
+        console.print(
+            "[yellow]No channels found. Run [bold]llm-expose add channel[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    if channel_name is None:
+        return _select_from_list("Select a channel:", channels)
+
+    normalized = channel_name.strip()
+    if normalized not in channels:
+        console.print(f"[red]No channel named '{normalized}' found.[/red]")
+        raise typer.Exit(code=1)
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +361,39 @@ def add_channel() -> None:
     )
 
 
+@add_app.command("pair")
+def add_pair_cmd(
+    pair_id: Optional[str] = typer.Argument(
+        None,
+        help="Pair ID (for Telegram this is the chat ID)",
+    ),
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help="Channel config name to attach this pair to",
+    ),
+) -> None:
+    """Add a pair ID to a channel allowlist."""
+    channel_name = _resolve_channel_name_for_pairs(channel)
+
+    resolved_pair_id = pair_id.strip() if pair_id is not None else ""
+    while not resolved_pair_id:
+        resolved_pair_id = Prompt.ask("Pair ID (for Telegram this is chat.id)").strip()
+        if not resolved_pair_id:
+            console.print("[red]Pair ID cannot be empty.[/red]")
+
+    try:
+        saved_path = add_channel_pair(channel_name, resolved_pair_id)
+    except Exception as exc:
+        console.print(f"[red]Failed to add pair: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"\n[bold green]✓ Pair '{resolved_pair_id}' added to channel '{channel_name}' ({saved_path}).[/bold green]\n"
+    )
+
+
 # ---------------------------------------------------------------------------
 # DELETE Commands
 # ---------------------------------------------------------------------------
@@ -411,6 +467,48 @@ def delete_channel_cmd(
         raise typer.Exit(code=1) from exc
 
 
+@delete_app.command("pair")
+def delete_pair_cmd(
+    pair_id: Optional[str] = typer.Argument(
+        None,
+        help="Pair ID to delete",
+    ),
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help="Channel config name that owns this pair",
+    ),
+) -> None:
+    """Delete a pair ID from a channel allowlist."""
+    channel_name = _resolve_channel_name_for_pairs(channel)
+
+    resolved_pair_id = pair_id.strip() if pair_id is not None else ""
+    if not resolved_pair_id:
+        available_pairs = get_pairs_for_channel(channel_name)
+        if not available_pairs:
+            console.print(
+                f"[yellow]No pairs found for channel '{channel_name}'.[/yellow]"
+            )
+            raise typer.Exit(code=1)
+        resolved_pair_id = _select_from_list("Select pair to delete:", available_pairs)
+
+    try:
+        delete_channel_pair(channel_name, resolved_pair_id)
+    except FileNotFoundError:
+        console.print(
+            f"[red]No pair '{resolved_pair_id}' found for channel '{channel_name}'.[/red]"
+        )
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Failed to delete pair: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"\n[bold green]✓ Pair '{resolved_pair_id}' removed from channel '{channel_name}'.[/bold green]\n"
+    )
+
+
 # ---------------------------------------------------------------------------
 # LIST Command
 # ---------------------------------------------------------------------------
@@ -467,6 +565,39 @@ def list_channels_cmd() -> None:
             table.add_row(str(idx), name, cfg.client_type, api_key_offuscated, attached)
         except Exception:
             table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
+
+    console.print(table)
+
+
+@list_app.command("pairs")
+@list_app.command("pair")
+def list_pairs_cmd(
+    channel: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help="Filter by channel config name",
+    ),
+) -> None:
+    """List channel pairing allowlists."""
+    pair_map = list_pairs(channel)
+    visible = [(name, pair_ids) for name, pair_ids in pair_map.items() if pair_ids]
+    if not visible:
+        console.print(
+            "[yellow]No pairs found. Run [bold]llm-expose add pair <id>[/bold] to add one.[/yellow]"
+        )
+        return
+
+    table = Table(title="Configured Pairs", border_style="cyan", show_lines=True)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Channel", style="bold")
+    table.add_column("Pair ID", style="green")
+
+    row = 1
+    for channel_name, pair_ids in sorted(visible):
+        for pair_value in pair_ids:
+            table.add_row(str(row), channel_name, pair_value)
+            row += 1
 
     console.print(table)
 
@@ -753,7 +884,12 @@ def start() -> None:
     # ---- Build and start service --------------------------------------
     # Create a temporary ExposureConfig for the orchestrator
     exposure_name = f"{model_name}_{channel_name}"
-    config = ExposureConfig(name=exposure_name, provider=provider_cfg, client=client_cfg)
+    config = ExposureConfig(
+        name=exposure_name,
+        channel_name=channel_name,
+        provider=provider_cfg,
+        client=client_cfg,
+    )
     
     _start_service(config)
 

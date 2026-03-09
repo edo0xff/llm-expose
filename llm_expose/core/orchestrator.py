@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm_expose.clients.base import BaseClient, MessageResponse
-from llm_expose.config.loader import load_mcp_config
+from llm_expose.config.loader import get_pairs_for_channel, load_mcp_config
 from llm_expose.config.models import ExposureConfig, MCPSettingsConfig
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
 from llm_expose.providers.base import BaseProvider, Message, ToolChoice, ToolSpec
@@ -73,6 +73,14 @@ class Orchestrator:
         self._mcp_settings = MCPSettingsConfig()
         self._pending_approvals: dict[str, _PendingApproval] = {}
         self._approval_ttl_seconds = 600
+        self._channel_name = config.channel_name
+        self._paired_channel_ids: set[str] = set()
+
+        if self._channel_name:
+            try:
+                self._paired_channel_ids = set(get_pairs_for_channel(self._channel_name))
+            except Exception as exc:  # pragma: no cover - defensive logging path
+                logger.warning("Failed to load channel pairs: %s", exc)
 
         try:
             mcp_config = load_mcp_config()
@@ -166,6 +174,9 @@ class Orchestrator:
             channel_id = channel_or_message
             text = user_message
 
+        if not self._is_channel_paired(channel_id):
+            return f"This instance is not paired. Run llm-expose add pair {channel_id}"
+
         approval_decision = self._parse_approval_decision(text)
         if approval_decision is not None:
             return await self._handle_approval_decision(channel_id, *approval_decision)
@@ -197,6 +208,25 @@ class Orchestrator:
 
         # Use mixed approval handler which respects per-server confirmation settings
         return await self._handle_message_with_mixed_approval(history, tools, channel_id)
+
+    def _is_channel_paired(self, channel_id: str) -> bool:
+        """Return whether an incoming channel ID is allowed for this exposure.
+
+        Pair enforcement is active only when a channel namespace was supplied in
+        config. This keeps backward compatibility for direct programmatic usage.
+        """
+        if not self._channel_name:
+            return True
+
+        # Reload persisted pair data on each check so runtime add/remove
+        # operations are reflected without restarting the exposure process.
+        try:
+            self._paired_channel_ids = set(get_pairs_for_channel(self._channel_name))
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.warning("Failed to refresh channel pairs: %s", exc)
+            return False
+
+        return channel_id in self._paired_channel_ids
 
     @staticmethod
     def _parse_approval_decision(text: str) -> tuple[bool, str] | None:

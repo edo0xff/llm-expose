@@ -12,6 +12,7 @@ from llm_expose.config.models import (
     MCPConfig,
     MCPServerConfig,
     MCPSettingsConfig,
+    PairingsConfig,
     ProviderConfig,
     TelegramClientConfig,
 )
@@ -45,6 +46,11 @@ def get_channels_dir() -> Path:
 def get_mcp_config_path() -> Path:
     """Return the file path used to store MCP server settings/config."""
     return get_base_dir() / "mcp_servers.yaml"
+
+
+def get_pairs_config_path() -> Path:
+    """Return the file path used to store channel pairing settings."""
+    return get_base_dir() / "pairs.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +292,99 @@ def save_mcp_settings(settings: MCPSettingsConfig) -> Path:
     config = load_mcp_config()
     config.settings = settings
     return save_mcp_config(config)
+
+
+# ---------------------------------------------------------------------------
+# Channel Pairing Config Management
+# ---------------------------------------------------------------------------
+
+
+def load_pairings_config() -> PairingsConfig:
+    """Load channel pairing configuration from disk.
+
+    Returns defaults when the config file does not exist yet.
+    """
+    path = get_pairs_config_path()
+    if not path.exists():
+        return PairingsConfig()
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    return PairingsConfig.model_validate(data)
+
+
+def save_pairings_config(config: PairingsConfig) -> Path:
+    """Persist channel pairing configuration to disk."""
+    path = get_pairs_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(config.model_dump(), fh, allow_unicode=True, sort_keys=False)
+    return path
+
+
+def list_pairs(channel_name: Optional[str] = None) -> dict[str, list[str]]:
+    """Return channel-scoped pair IDs.
+
+    Args:
+        channel_name: Optional channel name to filter by.
+    """
+    config = load_pairings_config()
+    if channel_name is None:
+        return config.pairs_by_channel
+
+    normalized_channel_name = channel_name.strip()
+    return {normalized_channel_name: config.pairs_by_channel.get(normalized_channel_name, [])}
+
+
+def get_pairs_for_channel(channel_name: str) -> list[str]:
+    """Return the pair IDs configured for a specific channel config name."""
+    normalized_channel_name = channel_name.strip()
+    if not normalized_channel_name:
+        raise ValueError("channel_name must not be empty or whitespace")
+
+    config = load_pairings_config()
+    return config.pairs_by_channel.get(normalized_channel_name, []).copy()
+
+
+def add_pair(channel_name: str, pair_id: str) -> Path:
+    """Add a pair ID to a channel's pairing allowlist."""
+    normalized_channel_name = channel_name.strip()
+    normalized_pair_id = pair_id.strip()
+    if not normalized_channel_name:
+        raise ValueError("channel_name must not be empty or whitespace")
+    if not normalized_pair_id:
+        raise ValueError("pair_id must not be empty or whitespace")
+
+    config = load_pairings_config()
+    existing = config.pairs_by_channel.get(normalized_channel_name, [])
+    if normalized_pair_id not in existing:
+        config.pairs_by_channel[normalized_channel_name] = [*existing, normalized_pair_id]
+    return save_pairings_config(config)
+
+
+def delete_pair(channel_name: str, pair_id: str) -> Path:
+    """Delete a pair ID from a channel's pairing allowlist.
+
+    Raises:
+        FileNotFoundError: If the channel/pair entry does not exist.
+    """
+    normalized_channel_name = channel_name.strip()
+    normalized_pair_id = pair_id.strip()
+    if not normalized_channel_name:
+        raise ValueError("channel_name must not be empty or whitespace")
+    if not normalized_pair_id:
+        raise ValueError("pair_id must not be empty or whitespace")
+
+    config = load_pairings_config()
+    existing = config.pairs_by_channel.get(normalized_channel_name, [])
+    if normalized_pair_id not in existing:
+        raise FileNotFoundError(
+            f"No pair '{normalized_pair_id}' found for channel '{normalized_channel_name}'"
+        )
+
+    updated = [value for value in existing if value != normalized_pair_id]
+    if updated:
+        config.pairs_by_channel[normalized_channel_name] = updated
+    else:
+        config.pairs_by_channel.pop(normalized_channel_name, None)
+
+    return save_pairings_config(config)
