@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 from llm_expose.config.models import MCPConfig, MCPServerConfig
+from llm_expose.core.builtin_mcp import BuiltinMCPClient, ToolExecutionContext
 from llm_expose.core.content_parts import content_has_images, normalize_mcp_content
 from llm_expose.providers.base import ToolSpec
 
@@ -59,20 +60,33 @@ class MCPRuntimeManager:
         if self._initialized:
             return
 
-        try:
-            from fastmcp import Client
-            from fastmcp.client.transports import (
-                SSETransport,
-                StdioTransport,
-                StreamableHttpTransport,
-            )
-        except Exception as exc:
-            logger.warning(
-                "FastMCP unavailable. Install 'fastmcp' to enable MCP support. Error: %s",
-                exc,
-            )
-            self._initialized = True
-            return
+        client_cls: Any | None = None
+        stdio_transport_cls: Any | None = None
+        sse_transport_cls: Any | None = None
+        http_transport_cls: Any | None = None
+
+        needs_external_runtime = any(
+            server.enabled and server.transport != "builtin"
+            for server in self._config.servers
+        )
+        if needs_external_runtime:
+            try:
+                from fastmcp import Client
+                from fastmcp.client.transports import (
+                    SSETransport,
+                    StdioTransport,
+                    StreamableHttpTransport,
+                )
+
+                client_cls = Client
+                stdio_transport_cls = StdioTransport
+                sse_transport_cls = SSETransport
+                http_transport_cls = StreamableHttpTransport
+            except Exception as exc:
+                logger.warning(
+                    "FastMCP unavailable. External MCP servers will be skipped. Error: %s",
+                    exc,
+                )
 
         for server in self._config.servers:
             if not server.enabled:
@@ -80,10 +94,10 @@ class MCPRuntimeManager:
             try:
                 client = await self._create_client(
                     server,
-                    client_cls=Client,
-                    stdio_transport_cls=StdioTransport,
-                    sse_transport_cls=SSETransport,
-                    http_transport_cls=StreamableHttpTransport,
+                    client_cls=client_cls,
+                    stdio_transport_cls=stdio_transport_cls,
+                    sse_transport_cls=sse_transport_cls,
+                    http_transport_cls=http_transport_cls,
                 )
                 if client is None:
                     continue
@@ -115,6 +129,16 @@ class MCPRuntimeManager:
         http_transport_cls: Any,
     ) -> Any | None:
         """Create a FastMCP client for the given server configuration."""
+        if server.transport == "builtin":
+            return BuiltinMCPClient(server_name=server.name)
+
+        if client_cls is None:
+            logger.warning(
+                "Skipping MCP server '%s': external MCP runtime is unavailable.",
+                server.name,
+            )
+            return None
+
         if server.transport == "stdio":
             if not server.command:
                 logger.warning(
@@ -271,7 +295,12 @@ class MCPRuntimeManager:
         except Exception:
             return {"value": str(value)}
 
-    async def execute_tool_call(self, openai_tool_call: Any) -> str | list[dict[str, Any]]:
+    async def execute_tool_call(
+        self,
+        openai_tool_call: Any,
+        *,
+        execution_context: ToolExecutionContext | None = None,
+    ) -> str | list[dict[str, Any]]:
         """Execute a single OpenAI tool call and return text or structured content."""
         logger.info("Received tool call: %s", openai_tool_call)
         tool_call_dict = self._to_dict(openai_tool_call)
@@ -294,7 +323,14 @@ class MCPRuntimeManager:
                 arguments = json.loads(arguments) if arguments else {}
 
             # Call the tool via FastMCP client
-            result = await client.call_tool(tool_name, arguments)
+            if hasattr(client, "call_tool_with_context"):
+                result = await client.call_tool_with_context(
+                    tool_name,
+                    arguments,
+                    execution_context=execution_context,
+                )
+            else:
+                result = await client.call_tool(tool_name, arguments)
 
             logger.info("Executed tool call '%s' with result: %s", tool_name, result)
             normalized_content = self._result_to_openai_content(result)

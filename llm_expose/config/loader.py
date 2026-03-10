@@ -21,6 +21,42 @@ from llm_expose.config.models import (
 _DEFAULT_BASE_DIR = Path.home() / ".llm-expose"
 
 
+def get_builtin_mcp_servers() -> list[MCPServerConfig]:
+    """Return builtin MCP server definitions available to all installs."""
+    return [
+        MCPServerConfig(
+            name="builtin-core",
+            transport="builtin",
+        )
+    ]
+
+
+def _merge_builtin_mcp_servers(config: MCPConfig) -> MCPConfig:
+    """Return an MCP config view with builtin servers injected by name.
+
+    Persisted server entries take precedence over builtin defaults when names
+    collide so explicit overrides do not create duplicate entries.
+    """
+    merged_servers = list(config.servers)
+    configured_server_names = {server.name for server in merged_servers}
+
+    for builtin_server in get_builtin_mcp_servers():
+        if builtin_server.name not in configured_server_names:
+            merged_servers.append(builtin_server)
+
+    return MCPConfig(settings=config.settings, servers=merged_servers)
+
+
+def _load_persisted_mcp_config() -> MCPConfig:
+    """Load only MCP configuration persisted on disk."""
+    path = get_mcp_config_path()
+    if not path.exists():
+        return MCPConfig()
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    return MCPConfig.model_validate(data)
+
+
 def get_base_dir() -> Path:
     """Return the base directory used to store all configs.
 
@@ -211,12 +247,7 @@ def load_mcp_config() -> MCPConfig:
 
     Returns defaults when the config file does not exist yet.
     """
-    path = get_mcp_config_path()
-    if not path.exists():
-        return MCPConfig()
-    with path.open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-    return MCPConfig.model_validate(data)
+    return _merge_builtin_mcp_servers(_load_persisted_mcp_config())
 
 
 def save_mcp_config(config: MCPConfig) -> Path:
@@ -256,7 +287,7 @@ def get_mcp_server(name: str) -> MCPServerConfig:
 
 def save_mcp_server(server: MCPServerConfig) -> Path:
     """Create or update a single MCP server entry by name."""
-    config = load_mcp_config()
+    config = _load_persisted_mcp_config()
     updated = False
     for idx, current in enumerate(config.servers):
         if current.name == server.name:
@@ -274,7 +305,7 @@ def delete_mcp_server(name: str) -> None:
     Raises:
         FileNotFoundError: If no MCP server with the given name exists.
     """
-    config = load_mcp_config()
+    config = _load_persisted_mcp_config()
     original_count = len(config.servers)
     config.servers = [server for server in config.servers if server.name != name]
     if len(config.servers) == original_count:
@@ -289,7 +320,7 @@ def load_mcp_settings() -> MCPSettingsConfig:
 
 def save_mcp_settings(settings: MCPSettingsConfig) -> Path:
     """Persist only global MCP runtime settings."""
-    config = load_mcp_config()
+    config = _load_persisted_mcp_config()
     config.settings = settings
     return save_mcp_config(config)
 

@@ -13,6 +13,7 @@ from llm_expose.config.models import ProviderConfig, TelegramClientConfig
 from llm_expose.cli.main import (
     add_pair_cmd,
     add_channel,
+    add_mcp_cmd,
     delete_pair_cmd,
     list_pairs_cmd,
     message,
@@ -68,6 +69,25 @@ class TestCliHelpers:
         assert saved_cfg.mcp_servers == ["mcp-a"]
         assert saved_cfg.system_prompt_path is None
 
+    def test_add_channel_saves_selected_builtin_server(self) -> None:
+        with patch("llm_expose.cli.main._print_banner"), patch(
+            "llm_expose.cli.main.list_channels", return_value=[]
+        ), patch("llm_expose.cli.main._select_from_list", return_value="Telegram"), patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=["builtin-core", "mcp-a"]
+        ), patch(
+            "llm_expose.cli.main._select_mcp_servers_for_channel", return_value=["builtin-core"]
+        ), patch(
+            "llm_expose.cli.main.Prompt.ask", side_effect=["my-channel", "123:tok"]
+        ), patch(
+            "llm_expose.cli.main.Confirm.ask", return_value=False
+        ), patch(
+            "llm_expose.cli.main.save_channel", return_value=Path("/tmp/ch.yaml")
+        ) as save_channel_mock:
+            add_channel()
+
+        saved_cfg = save_channel_mock.call_args.args[1]
+        assert saved_cfg.mcp_servers == ["builtin-core"]
+
     def test_add_channel_saves_with_custom_system_prompt(self) -> None:
         with patch("llm_expose.cli.main._print_banner"), patch(
             "llm_expose.cli.main.list_channels", return_value=[]
@@ -105,6 +125,28 @@ class TestCliHelpers:
             add_pair_cmd(None, channel="telegram-main")
 
         add_pair_mock.assert_called_once_with("telegram-main", "84")
+
+    def test_add_mcp_cmd_saves_builtin_server(self) -> None:
+        with patch("llm_expose.cli.main._print_banner"), patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch(
+            "llm_expose.cli.main._select_from_list",
+            side_effect=["builtin", "default"],
+        ), patch(
+            "llm_expose.cli.main.Prompt.ask",
+            side_effect=["builtin-core"],
+        ), patch(
+            "llm_expose.cli.main.Confirm.ask", return_value=True
+        ), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mcp_server_mock:
+            add_mcp_cmd()
+
+        saved_cfg = save_mcp_server_mock.call_args.args[0]
+        assert saved_cfg.name == "builtin-core"
+        assert saved_cfg.transport == "builtin"
+        assert saved_cfg.command is None
+        assert saved_cfg.url is None
 
     def test_list_pairs_cmd_shows_configured_pairs(self) -> None:
         with patch("llm_expose.cli.main.list_pairs", return_value={"telegram-main": ["42"]}), patch(

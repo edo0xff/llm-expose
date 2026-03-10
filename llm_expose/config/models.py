@@ -102,7 +102,7 @@ class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server integration."""
 
     name: str = Field(description="Unique MCP server name")
-    transport: Literal["stdio", "sse", "http"] = Field(
+    transport: Literal["stdio", "sse", "http", "builtin"] = Field(
         default="stdio", description="Transport type used to connect to the MCP server"
     )
     command: Optional[str] = Field(

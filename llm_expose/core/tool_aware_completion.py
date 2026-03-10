@@ -8,6 +8,7 @@ import logging
 from typing import Any, Optional
 
 from llm_expose.config.models import MCPConfig
+from llm_expose.core.builtin_mcp import ToolExecutionContext
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
 from llm_expose.providers.base import BaseProvider, Message, ToolSpec
 
@@ -80,6 +81,7 @@ class ToolAwareCompletion:
         self,
         messages: list[Message],
         *,
+        execution_context: ToolExecutionContext | None = None,
         max_rounds: int = 8,
     ) -> str:
         """Execute tool-aware completion loop (auto-execute all tools).
@@ -112,7 +114,11 @@ class ToolAwareCompletion:
                 return str(content)
             
             # Execute all tool calls
-            await self._execute_tool_calls(history, tool_calls)
+            await self._execute_tool_calls(
+                history,
+                tool_calls,
+                execution_context=execution_context,
+            )
         
         # Max rounds exceeded
         fallback = "Tool execution exceeded maximum rounds; stopping to avoid infinite loop."
@@ -163,6 +169,8 @@ class ToolAwareCompletion:
         self,
         history: list[Message],
         tool_calls: list[Any],
+        *,
+        execution_context: ToolExecutionContext | None = None,
     ) -> None:
         """Execute tool calls and append results to history.
         
@@ -172,7 +180,10 @@ class ToolAwareCompletion:
             call_id = self._tool_call_id(call)
             try:
                 tool_result = await asyncio.wait_for(
-                    self._mcp_runtime.execute_tool_call(call),
+                    self._mcp_runtime.execute_tool_call(
+                        call,
+                        execution_context=execution_context,
+                    ),
                     timeout=self._timeout_seconds,
                 )
             except asyncio.TimeoutError:

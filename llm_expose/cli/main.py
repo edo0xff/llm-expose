@@ -44,6 +44,7 @@ from llm_expose.config import (
     save_model,
 )
 from llm_expose.config.models import ExposureConfig
+from llm_expose.core.builtin_mcp import ToolExecutionContext
 from llm_expose.core.content_parts import build_user_content, file_to_data_url
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
@@ -681,7 +682,12 @@ def list_mcp_cmd() -> None:
     for idx, name in enumerate(servers, start=1):
         try:
             server = get_mcp_server(name)
-            target = server.command if server.transport == "stdio" else server.url
+            if server.transport == "stdio":
+                target = server.command
+            elif server.transport in {"sse", "http"}:
+                target = server.url
+            else:
+                target = "[builtin]"
             table.add_row(
                 str(idx),
                 server.name,
@@ -717,12 +723,16 @@ def add_mcp_cmd() -> None:
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit()
 
-    transport = _select_from_list("Select MCP transport:", ["stdio", "sse"])
+    transport = _select_from_list("Select MCP transport:", ["builtin", "stdio", "sse"])
     command: Optional[str] = None
     args: list[str] = []
     url: Optional[str] = None
 
-    if transport == "stdio":
+    if transport == "builtin":
+        console.print(
+            "\n[yellow]Builtin MCP servers run in-process llm-expose tools. Some builtin tools may trigger external actions such as sending messages.[/yellow]"
+        )
+    elif transport == "stdio":
         command = Prompt.ask("  Command to run (example: npx, uvx)").strip()
         if not command:
             console.print("[red]Command cannot be empty for stdio transport.[/red]")
@@ -1118,6 +1128,14 @@ def message(
                 try:
                     mcp_config = load_mcp_config()
                     user_content = build_user_content(text, image_urls=image_data_urls)
+                    execution_context = ToolExecutionContext(
+                        execution_mode="one-shot",
+                        channel_id=user_id,
+                        channel_name=channel,
+                        subject_id=user_id,
+                        subject_kind="chat",
+                        platform=client_cfg.client_type,
+                    )
                     async def _tool_aware_complete():
                         async with ToolAwareCompletion(
                             provider=provider,
@@ -1129,7 +1147,8 @@ def message(
                                 messages=[
                                     {"role": "system", "content": system_prompt},
                                     {"role": "user", "content": user_content},
-                                ]
+                                ],
+                                execution_context=execution_context,
                             )
                     llm_response_text = asyncio.run(_tool_aware_complete())
                 except Exception as exc:

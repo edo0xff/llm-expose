@@ -28,6 +28,7 @@ from llm_expose.config.loader import (
     list_pairs,
     load_model,
     load_channel,
+    load_mcp_config,
     load_mcp_settings,
     save_model,
     save_channel,
@@ -154,6 +155,10 @@ class TestMCPConfig:
         cfg = MCPServerConfig(name="remote", transport="sse", url="http://localhost:3000/sse")
         assert cfg.transport == "sse"
         assert cfg.url == "http://localhost:3000/sse"
+
+    def test_valid_builtin_server(self) -> None:
+        cfg = MCPServerConfig(name="builtin-core", transport="builtin")
+        assert cfg.transport == "builtin"
 
     def test_settings_defaults(self) -> None:
         settings = MCPSettingsConfig()
@@ -329,11 +334,23 @@ class TestChannelLoader:
 
 
 class TestMCPLoader:
+    def test_load_mcp_config_injects_builtin_server_when_missing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+
+        config = load_mcp_config()
+
+        assert [server.name for server in config.servers] == ["builtin-core"]
+        assert config.servers[0].transport == "builtin"
+
     def test_save_and_list_servers(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
         save_mcp_server(MCPServerConfig(name="db", transport="sse", url="http://localhost:3000/sse"))
-        assert list_mcp_servers() == ["db", "web"]
+        assert list_mcp_servers() == ["builtin-core", "db", "web"]
 
     def test_http_transport_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that HTTP transport is properly supported in MCP server config."""
@@ -342,7 +359,36 @@ class TestMCPLoader:
         server = get_mcp_server("http-server")
         assert server.transport == "http"
         assert server.url == "http://localhost:8080/mcp"
-        assert list_mcp_servers() == ["http-server"]
+        assert list_mcp_servers() == ["builtin-core", "http-server"]
+
+    def test_builtin_transport_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_server(MCPServerConfig(name="builtin-core", transport="builtin"))
+        server = get_mcp_server("builtin-core")
+        assert server.transport == "builtin"
+        assert server.command is None
+        assert server.url is None
+
+    def test_persisted_builtin_server_overrides_injected_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        save_mcp_server(
+            MCPServerConfig(
+                name="builtin-core",
+                transport="builtin",
+                enabled=False,
+                tool_confirmation="never",
+            )
+        )
+
+        config = load_mcp_config()
+
+        assert [server.name for server in config.servers] == ["builtin-core"]
+        assert config.servers[0].enabled is False
+        assert config.servers[0].tool_confirmation == "never"
 
     def test_get_server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
@@ -350,11 +396,22 @@ class TestMCPLoader:
         server = get_mcp_server("web")
         assert server.command == "npx"
 
+    def test_get_builtin_server_without_persisted_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+
+        server = get_mcp_server("builtin-core")
+
+        assert server.transport == "builtin"
+
     def test_delete_server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
         delete_mcp_server("web")
-        assert list_mcp_servers() == []
+        assert list_mcp_servers() == ["builtin-core"]
 
     def test_delete_nonexistent_server_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))

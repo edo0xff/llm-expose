@@ -14,6 +14,7 @@ from typing import Any
 from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.config.loader import get_pairs_for_channel, load_mcp_config
 from llm_expose.config.models import ExposureConfig, MCPSettingsConfig
+from llm_expose.core.builtin_mcp import ToolExecutionContext
 from llm_expose.core.content_parts import extract_image_urls
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
@@ -34,6 +35,7 @@ class _PendingApproval:
     tools: list[ToolSpec]
     tool_calls: list[Any]
     server_names: dict[str, str]  # tool_name -> server_name mapping
+    execution_context: ToolExecutionContext | None = None
 
 
 class Orchestrator:
@@ -211,6 +213,7 @@ class Orchestrator:
         user_message: str | None = None,
         *,
         message_content: Any | None = None,
+        message_context: dict[str, Any] | None = None,
     ) -> str | MessageResponse:
         """Process a single user message and return the LLM's reply.
 
@@ -252,6 +255,10 @@ class Orchestrator:
                 )
 
         history = self._get_or_create_history(channel_id)
+        execution_context = self._build_tool_execution_context(
+            channel_id,
+            message_context=message_context,
+        )
         history.append(
             {
                 "role": "user",
@@ -272,8 +279,45 @@ class Orchestrator:
             return self._with_image_references(reply, response_images)
 
         # Use mixed approval handler which respects per-server confirmation settings
-        reply = await self._handle_message_with_mixed_approval(history, tools, channel_id)
+        reply = await self._handle_message_with_mixed_approval(
+            history,
+            tools,
+            channel_id,
+            execution_context=execution_context,
+        )
         return self._with_image_references(reply, response_images)
+
+    def _build_tool_execution_context(
+        self,
+        channel_id: str,
+        *,
+        message_context: dict[str, Any] | None = None,
+        execution_mode: str = "chat",
+    ) -> ToolExecutionContext:
+        context = message_context or {}
+        chat_type = str(context.get("chat_type") or "").strip().lower() or None
+        subject_kind = "chat"
+        if chat_type == "private":
+            subject_kind = "user"
+        elif chat_type in {"group", "supergroup", "channel"}:
+            subject_kind = "group"
+
+        initiator_user_id = context.get("effective_user_id")
+        if initiator_user_id is not None:
+            initiator_user_id = str(initiator_user_id)
+
+        platform = context.get("platform") or self._config.client.client_type
+
+        return ToolExecutionContext(
+            execution_mode="chat" if execution_mode == "chat" else "one-shot",
+            channel_id=channel_id,
+            channel_name=self._channel_name,
+            subject_id=channel_id,
+            subject_kind=subject_kind,
+            initiator_user_id=initiator_user_id,
+            platform=str(platform) if platform is not None else None,
+            chat_type=chat_type,
+        )
 
     @staticmethod
     def _with_image_references(
@@ -362,6 +406,7 @@ class Orchestrator:
         history: list[Message],
         tools: list[ToolSpec],
         channel_id: str,
+        execution_context: ToolExecutionContext | None = None,
     ) -> str:
         assistant_message = await self._provider_complete_message(
             history,
@@ -395,6 +440,7 @@ class Orchestrator:
             tools=tools,
             tool_calls=tool_calls,
             server_names=server_names,
+            execution_context=execution_context,
         )
         return self._format_approval_prompt(approval_id, tool_calls, server_names)
 
@@ -434,6 +480,7 @@ class Orchestrator:
         history: list[Message],
         tools: list[ToolSpec],
         channel_id: str,
+        execution_context: ToolExecutionContext | None = None,
     ) -> str:
         """Handle message with per-server tool confirmation settings.
         
@@ -480,7 +527,11 @@ class Orchestrator:
             if auto_execute_calls:
                 if self._mcp_runtime is None:
                     return "MCP runtime unavailable while handling tool calls."
-                await self._execute_tool_calls(history, auto_execute_calls)
+                await self._execute_tool_calls(
+                    history,
+                    auto_execute_calls,
+                    execution_context=execution_context,
+                )
 
             # If there are tools needing approval, create pending approval
             if needs_approval_calls:
@@ -505,6 +556,7 @@ class Orchestrator:
                     tools=tools,
                     tool_calls=needs_approval_calls,
                     server_names=server_names,
+                    execution_context=execution_context,
                 )
                 return self._format_approval_prompt(approval_id, needs_approval_calls, server_names)
 
@@ -540,8 +592,16 @@ class Orchestrator:
         if approved:
             if self._mcp_runtime is None:
                 return "MCP runtime unavailable while handling approval."
-            await self._execute_tool_calls(history, pending.tool_calls)
-            return await self._handle_message_with_mcp_tools(history, pending.tools)
+            await self._execute_tool_calls(
+                history,
+                pending.tool_calls,
+                execution_context=pending.execution_context,
+            )
+            return await self._handle_message_with_mcp_tools(
+                history,
+                pending.tools,
+                execution_context=pending.execution_context,
+            )
 
         for call in pending.tool_calls:
             history.append(
@@ -559,6 +619,8 @@ class Orchestrator:
         self,
         history: list[Message],
         tool_calls: list[Any],
+        *,
+        execution_context: ToolExecutionContext | None = None,
     ) -> None:
         if self._mcp_runtime is None:
             return
@@ -566,7 +628,10 @@ class Orchestrator:
             call_id = self._tool_call_id(call)
             try:
                 tool_result = await asyncio.wait_for(
-                    self._mcp_runtime.execute_tool_call(call),
+                    self._mcp_runtime.execute_tool_call(
+                        call,
+                        execution_context=execution_context,
+                    ),
                     timeout=self._mcp_settings.tool_timeout_seconds,
                 )
             except asyncio.TimeoutError:
@@ -622,6 +687,8 @@ class Orchestrator:
         self,
         history: list[Message],
         tools: list[ToolSpec],
+        *,
+        execution_context: ToolExecutionContext | None = None,
     ) -> str:
         """Handle message with auto-execute tools (no approval).
         
@@ -636,7 +703,11 @@ class Orchestrator:
             mcp_runtime=self._mcp_runtime,
             timeout_seconds=self._mcp_settings.tool_timeout_seconds,
         ) as handler:
-            return await handler.complete(history, max_rounds=8)
+            return await handler.complete(
+                history,
+                execution_context=execution_context,
+                max_rounds=8,
+            )
 
     @staticmethod
     def _tool_call_id(tool_call: Any) -> str:

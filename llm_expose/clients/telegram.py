@@ -142,6 +142,11 @@ class TelegramClient(BaseClient):
                     chat_id,
                     user_text,
                     message_content=message_content,
+                    message_context={
+                        "platform": "telegram",
+                        "chat_type": getattr(update.message.chat, "type", None),
+                        "effective_user_id": getattr(update.effective_user, "id", None),
+                    },
                 )
             else:
                 reply = await self._handler(user_text)
@@ -286,7 +291,15 @@ class TelegramClient(BaseClient):
         try:
             bound_self = getattr(self._handler, "__self__", None)
             if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
-                reply = await self._handler(chat_id, command_text)
+                reply = await self._handler(
+                    chat_id,
+                    command_text,
+                    message_context={
+                        "platform": "telegram",
+                        "chat_type": getattr(query.message.chat, "type", None) if query.message else None,
+                        "effective_user_id": getattr(update.effective_user, "id", None),
+                    },
+                )
             else:
                 reply = await self._handler(command_text)
         except Exception as exc:

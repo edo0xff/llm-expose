@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -522,7 +523,7 @@ class TestOrchestrator:
 
         with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
             "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
-        ):
+        ), patch("llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         reply = await orch._handle_message("Use MCP")
@@ -530,6 +531,88 @@ class TestOrchestrator:
         fake_runtime.initialize.assert_awaited_once()
         fake_runtime.execute_tool_call.assert_awaited_once()
         assert provider.complete_with_message.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_handle_message_passes_execution_context_to_runtime(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="support",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["builtin-core"]),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="fallback")
+        provider.complete_with_message = AsyncMock(
+            side_effect=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_ctx",
+                            "type": "function",
+                            "function": {
+                                "name": "llm_expose_get_invocation_context",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "done"},
+            ]
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="optional"),
+            servers=[
+                MCPServerConfig(
+                    name="builtin-core",
+                    transport="builtin",
+                    allowed_tools=["llm_expose_get_invocation_context"],
+                    enabled=True,
+                )
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(return_value=json.dumps({"channel_id": "42"}))
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_get_invocation_context",
+                    "description": "Get invocation context",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ), patch("llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+            reply = await orch._handle_message(
+                "42",
+                "Use context",
+                message_context={
+                    "platform": "telegram",
+                    "chat_type": "private",
+                    "effective_user_id": "42",
+                },
+            )
+
+        assert reply == "done"
+        _, kwargs = fake_runtime.execute_tool_call.await_args
+        execution_context = kwargs["execution_context"]
+        assert execution_context.channel_id == "42"
+        assert execution_context.channel_name == "support"
+        assert execution_context.subject_kind == "user"
+        assert execution_context.initiator_user_id == "42"
+        assert execution_context.platform == "telegram"
 
     @pytest.mark.asyncio
     async def test_handle_message_skips_disabled_or_invalid_mcp_servers(self) -> None:
@@ -858,6 +941,33 @@ class TestOrchestrator:
 
         assert orch._mcp_runtime is None
         runtime_cls.assert_not_called()
+
+    def test_orchestrator_creates_runtime_for_injected_builtin_attachment(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["builtin-core"]),
+        )
+        provider = MagicMock()
+        client = MagicMock()
+        fake_runtime = MagicMock()
+
+        with patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager",
+            return_value=fake_runtime,
+        ) as runtime_cls:
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        assert orch._mcp_runtime is fake_runtime
+        runtime_cls.assert_called_once()
+        runtime_config = runtime_cls.call_args.args[0]
+        assert [server.name for server in runtime_config.servers] == ["builtin-core"]
+        assert runtime_config.servers[0].transport == "builtin"
 
     def test_orchestrator_warns_for_missing_attached_mcp_servers(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="llm_expose.core.orchestrator")
