@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -952,6 +952,11 @@ def message(
         "--llm-completion",
         help="Process text as instructions to LLM (generates response to send)",
     ),
+    suppress_send: bool = typer.Option(
+        False,
+        "--suppress-send",
+        help="Generate the model response but do not automatically send it to the user (requires --llm-completion)",
+    ),
     system_prompt_file: Optional[str] = typer.Option(
         None,
         "--system-prompt-file",
@@ -971,11 +976,15 @@ def message(
     With --llm-completion, the text is treated as instructions to the LLM.
     The LLM uses the channel's system prompt + your instructions to generate
     a response, which is then sent to the user (your instructions are not sent).
+
+    With --llm-completion --suppress-send, the LLM response is generated and
+    returned in the JSON output, but no message or image is delivered to the user.
     
     Examples:
         llm-expose message support 12345 "System is down"
         llm-expose message alerts 67890 "CPU at 95%. Generate a brief alert." --llm-completion
         llm-expose message news 12345 "Summarize today's headlines" --llm-completion --system-prompt-file /path/to/prompt.txt
+        llm-expose message ops 12345 "Draft a reply and decide later whether to send it" --llm-completion --suppress-send
     
     This command is useful for cron jobs and scheduled notifications.
     User must be paired with the channel (run 'llm-expose add pair' if needed).
@@ -995,6 +1004,10 @@ def message(
 
     if not text:
         console.print("[red]Error: Message text cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    if suppress_send and not llm_completion:
+        console.print("[red]Error: --suppress-send requires --llm-completion.[/red]")
         raise typer.Exit(code=1)
 
     # Load channel configuration
@@ -1157,17 +1170,25 @@ def message(
             "[yellow]Warning: --image is ignored without --llm-completion.[/yellow]"
         )
 
-    # Create client instance and send message
+    # Create client instance and send message unless auto-delivery is suppressed
     try:
-        # Client requires a handler, but send_message() doesn't use it
-        client = TelegramClient(client_cfg, handler=_placeholder_handler)
-        
-        # Run async send_message in event loop
-        result = asyncio.run(client.send_message(user_id, final_message))
+        if suppress_send:
+            result = {
+                "status": "suppressed",
+                "channel": channel,
+                "user_id": user_id,
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+        else:
+            # Client requires a handler, but send_message() doesn't use it
+            client = TelegramClient(client_cfg, handler=_placeholder_handler)
 
-        if llm_completion and image_data_urls:
-            image_result = asyncio.run(client.send_images(user_id, image_data_urls[:1]))
-            result["image_reference"] = image_result
+            # Run async send_message in event loop
+            result = asyncio.run(client.send_message(user_id, final_message))
+
+            if llm_completion and image_data_urls:
+                image_result = asyncio.run(client.send_images(user_id, image_data_urls[:1]))
+                result["image_reference"] = image_result
         
         # Extend result with LLM metadata if applicable
         if llm_completion and llm_response_text:

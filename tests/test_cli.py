@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 from pathlib import Path
 
+import pytest
+import typer
+
+from llm_expose.config.models import ProviderConfig, TelegramClientConfig
 from llm_expose.cli.main import (
     add_pair_cmd,
     add_channel,
     delete_pair_cmd,
     list_pairs_cmd,
+    message,
     _parse_multi_select_numbers,
     _select_mcp_servers_for_channel,
 )
@@ -125,3 +131,116 @@ class TestCliHelpers:
             delete_pair_cmd(None, channel="telegram-main")
 
         delete_pair_mock.assert_called_once_with("telegram-main", "84")
+
+    def test_message_suppress_send_requires_llm_completion(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.console.print"
+        ) as print_mock:
+            message(
+                channel="ops",
+                user_id="12345",
+                text="draft a reply",
+                llm_completion=False,
+                suppress_send=True,
+                system_prompt_file=None,
+                image=[],
+            )
+
+        assert exc_info.value.exit_code == 1
+        print_mock.assert_called_once_with(
+            "[red]Error: --suppress-send requires --llm-completion.[/red]"
+        )
+
+    def test_message_suppress_send_returns_llm_json_without_delivery(self) -> None:
+        client_cfg = TelegramClientConfig(
+            bot_token="123:tok",
+            model_name="ops-model",
+        )
+        provider_cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o-mini",
+            api_key="secret",
+            base_url=None,
+        )
+
+        with patch("llm_expose.cli.main.load_channel", return_value=client_cfg), patch(
+            "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
+        ), patch("llm_expose.cli.main.load_model", return_value=provider_cfg), patch(
+            "llm_expose.cli.main.LiteLLMProvider"
+        ) as provider_cls_mock, patch(
+            "llm_expose.cli.main.TelegramClient"
+        ) as client_cls_mock, patch(
+            "llm_expose.cli.main.asyncio.run", return_value="Generated reply"
+        ) as asyncio_run_mock, patch(
+            "llm_expose.cli.main.console.print"
+        ) as print_mock:
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Draft a reply",
+                llm_completion=True,
+                suppress_send=True,
+                system_prompt_file=None,
+                image=[],
+            )
+
+        provider_cls_mock.assert_called_once_with(provider_cfg)
+        client_cls_mock.assert_not_called()
+        assert asyncio_run_mock.call_count == 1
+
+        result = json.loads(print_mock.call_args.args[0])
+        assert result["status"] == "suppressed"
+        assert result["channel"] == "ops"
+        assert result["user_id"] == "12345"
+        assert result["llm_response"] == "Generated reply"
+        assert result["llm_model"] == "ops-model"
+        assert "message_id" not in result
+
+    def test_message_without_suppress_send_still_delivers(self) -> None:
+        client_cfg = TelegramClientConfig(
+            bot_token="123:tok",
+            model_name="ops-model",
+        )
+        provider_cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o-mini",
+            api_key="secret",
+            base_url=None,
+        )
+
+        with patch("llm_expose.cli.main.load_channel", return_value=client_cfg), patch(
+            "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
+        ), patch("llm_expose.cli.main.load_model", return_value=provider_cfg), patch(
+            "llm_expose.cli.main.LiteLLMProvider"
+        ), patch("llm_expose.cli.main.TelegramClient") as client_cls_mock, patch(
+            "llm_expose.cli.main.asyncio.run",
+            side_effect=[
+                "Generated reply",
+                {
+                    "message_id": "99",
+                    "timestamp": "2026-03-10T00:00:00Z",
+                    "status": "sent",
+                    "user_id": "12345",
+                },
+            ],
+        ) as asyncio_run_mock, patch("llm_expose.cli.main.console.print") as print_mock:
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Draft a reply",
+                llm_completion=True,
+                suppress_send=False,
+                system_prompt_file=None,
+                image=[],
+            )
+
+        client_cls_mock.assert_called_once()
+        client_mock = client_cls_mock.return_value
+        client_mock.send_message.assert_called_once_with("12345", "Generated reply")
+        assert asyncio_run_mock.call_count == 2
+
+        result = json.loads(print_mock.call_args.args[0])
+        assert result["status"] == "sent"
+        assert result["message_id"] == "99"
+        assert result["llm_response"] == "Generated reply"
+        assert result["llm_model"] == "ops-model"
