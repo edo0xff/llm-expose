@@ -66,9 +66,9 @@ app = typer.Typer(
 )
 
 # Subcommands for 'add' and 'delete'
-add_app = typer.Typer(help="Add model, channel, or MCP server configurations")
-delete_app = typer.Typer(help="Delete model, channel, or MCP server configurations")
-list_app = typer.Typer(help="List saved models, channels, or MCP servers")
+add_app = typer.Typer(help="Add model, channel, pairs, or MCP server configurations")
+delete_app = typer.Typer(help="Delete model, channel, pairs, or MCP server configurations")
+list_app = typer.Typer(help="List saved models, channels, pairs, or MCP servers")
 
 app.add_typer(add_app, name="add")
 app.add_typer(delete_app, name="delete")
