@@ -28,6 +28,7 @@ class TestBuiltinMCPRuntime:
         tool_names = {tool["function"]["name"] for tool in runtime.tools}
         assert tool_names == {
             "llm_expose_get_invocation_context",
+            "llm_expose_get_invocation_attachments",
             "llm_expose_get_pairing_ids",
             "llm_expose_send_text_message",
             "llm_expose_send_file_message",
@@ -61,6 +62,75 @@ class TestBuiltinMCPRuntime:
         assert payload["user_id"] == "42"
         assert payload["execution_mode"] == "chat"
         assert payload["platform"] == "telegram"
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_get_invocation_attachments_returns_context_attachments(self) -> None:
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        execution_context = ToolExecutionContext(
+            execution_mode="chat",
+            channel_id="42",
+            attachments=[
+                {
+                    "kind": "image",
+                    "source_type": "local_path",
+                    "filename": "frame.jpg",
+                    "path": "C:/tmp/frame.jpg",
+                }
+            ],
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_get_attachments",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_get_invocation_attachments",
+                    "arguments": "{}",
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        assert len(payload["attachments"]) == 1
+        assert payload["attachments"][0]["filename"] == "frame.jpg"
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_get_invocation_attachments_returns_empty_without_context(self) -> None:
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_get_attachments",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_get_invocation_attachments",
+                    "arguments": "{}",
+                },
+            },
+        )
+
+        payload = json.loads(result)
+        assert payload["attachments"] == []
 
         await runtime.shutdown()
 
@@ -225,6 +295,48 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
+    async def test_builtin_send_image_message_tool_resolves_attachment_ref(self, tmp_path) -> None:
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        image_file = tmp_path / "snapshot.jpg"
+        image_file.write_bytes(b"fake-jpeg")
+
+        sender = AsyncMock()
+        sender.send_images = AsyncMock(return_value={"status": "sent", "count": 1})
+        execution_context = ToolExecutionContext(
+            execution_mode="one-shot",
+            channel_id="42",
+            attachment_paths_by_ref={"att_1": str(image_file.resolve())},
+            sender=sender,
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_send_image_ref",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_send_image_message",
+                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "attachment_ref": "att_1"}),
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        sender.send_images.assert_awaited_once()
+        assert payload["status"] == "ok"
+        assert payload["tool"] == "llm_expose_send_image_message"
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
     async def test_builtin_send_tools_return_error_when_sender_missing(self) -> None:
         runtime = MCPRuntimeManager(
             MCPConfig(
@@ -293,6 +405,86 @@ class TestBuiltinMCPRuntime:
         sender.send_file.assert_not_called()
         assert payload["status"] == "error"
         assert "file not found" in payload["error"]
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_send_file_message_tool_resolves_attachment_ref(self, tmp_path) -> None:
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        test_file = tmp_path / "sample.txt"
+        test_file.write_text("hello", encoding="utf-8")
+
+        sender = AsyncMock()
+        sender.send_file = AsyncMock(return_value={"status": "sent", "file_name": "sample.txt"})
+        execution_context = ToolExecutionContext(
+            execution_mode="one-shot",
+            channel_id="42",
+            attachment_paths_by_ref={"att_1": str(test_file.resolve())},
+            sender=sender,
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_send_file_ref",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_send_file_message",
+                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "attachment_ref": "att_1"}),
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        sender.send_file.assert_awaited_once_with("9001", str(test_file.resolve()))
+        assert payload["status"] == "ok"
+        assert payload["tool"] == "llm_expose_send_file_message"
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_send_image_message_requires_path_or_ref(self) -> None:
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        sender = AsyncMock()
+        sender.send_images = AsyncMock(return_value={"status": "sent", "count": 1})
+        execution_context = ToolExecutionContext(
+            execution_mode="one-shot",
+            channel_id="42",
+            sender=sender,
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_send_image_missing",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_send_image_message",
+                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001"}),
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        sender.send_images.assert_not_called()
+        assert payload["status"] == "error"
+        assert "image_path or attachment_ref" in payload["error"]
 
         await runtime.shutdown()
 

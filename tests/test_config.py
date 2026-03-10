@@ -164,6 +164,7 @@ class TestMCPConfig:
         settings = MCPSettingsConfig()
         assert settings.confirmation_mode == "optional"
         assert settings.tool_timeout_seconds == 30
+        assert settings.expose_attachment_paths is False
 
     def test_server_allows_tool_allowlist(self) -> None:
         cfg = MCPServerConfig(
@@ -423,13 +424,21 @@ class TestMCPLoader:
         settings = load_mcp_settings()
         assert settings.confirmation_mode == "optional"
         assert settings.tool_timeout_seconds == 30
+        assert settings.expose_attachment_paths is False
 
     def test_save_mcp_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
-        save_mcp_settings(MCPSettingsConfig(confirmation_mode="required", tool_timeout_seconds=45))
+        save_mcp_settings(
+            MCPSettingsConfig(
+                confirmation_mode="required",
+                tool_timeout_seconds=45,
+                expose_attachment_paths=True,
+            )
+        )
         settings = load_mcp_settings()
         assert settings.confirmation_mode == "required"
         assert settings.tool_timeout_seconds == 45
+        assert settings.expose_attachment_paths is True
 
 
 class TestPairLoader:

@@ -15,7 +15,7 @@ from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.config.loader import get_pairs_for_channel, load_mcp_config
 from llm_expose.config.models import ExposureConfig, MCPSettingsConfig
 from llm_expose.core.builtin_mcp import ToolExecutionContext
-from llm_expose.core.content_parts import extract_image_urls
+from llm_expose.core.content_parts import extract_image_urls, extract_invocation_attachments
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.base import BaseProvider, Message, ToolChoice, ToolSpec
@@ -257,6 +257,7 @@ class Orchestrator:
         history = self._get_or_create_history(channel_id)
         execution_context = self._build_tool_execution_context(
             channel_id,
+            message_content=message_content,
             message_context=message_context,
         )
         history.append(
@@ -291,6 +292,7 @@ class Orchestrator:
         self,
         channel_id: str,
         *,
+        message_content: Any | None = None,
         message_context: dict[str, Any] | None = None,
         execution_mode: str = "chat",
     ) -> ToolExecutionContext:
@@ -307,6 +309,7 @@ class Orchestrator:
             initiator_user_id = str(initiator_user_id)
 
         platform = context.get("platform") or self._config.client.client_type
+        attachments = extract_invocation_attachments(message_content)
 
         return ToolExecutionContext(
             execution_mode="chat" if execution_mode == "chat" else "one-shot",
@@ -317,6 +320,7 @@ class Orchestrator:
             initiator_user_id=initiator_user_id,
             platform=str(platform) if platform is not None else None,
             chat_type=chat_type,
+            attachments=attachments,
             sender=self._client,
         )
 

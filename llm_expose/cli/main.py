@@ -6,10 +6,11 @@ import asyncio
 import inspect
 import json
 import logging
+import uuid
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -46,7 +47,11 @@ from llm_expose.config import (
 )
 from llm_expose.config.models import ExposureConfig
 from llm_expose.core.builtin_mcp import ToolExecutionContext
-from llm_expose.core.content_parts import build_user_content, file_to_data_url
+from llm_expose.core.content_parts import (
+    build_local_attachment_descriptor,
+    build_user_content,
+    file_to_data_url,
+)
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.litellm_provider import LiteLLMProvider
@@ -1085,6 +1090,7 @@ def message(
     llm_response_text = None
     llm_model_used = None
     image_data_urls: list[str] = []
+    image_paths: list[Path] = []
 
     if llm_completion and image:
         for image_path_str in image:
@@ -1092,6 +1098,7 @@ def message(
             if not image_path.exists() or not image_path.is_file():
                 console.print(f"[red]Error: Image file not found: {image_path_str}[/red]")
                 raise typer.Exit(code=1)
+            image_paths.append(image_path)
             image_data_urls.append(file_to_data_url(image_path))
 
     # If LLM completion is requested, generate response from instructions
@@ -1159,6 +1166,22 @@ def message(
                 try:
                     mcp_config = load_mcp_config()
                     user_content = build_user_content(text, image_urls=image_data_urls)
+                    expose_paths = mcp_config.settings.expose_attachment_paths
+                    attachment_paths_by_ref: dict[str, str] = {}
+                    invocation_attachments: list[dict[str, Any]] = []
+                    for image_path in image_paths:
+                        attachment_ref = f"att_{uuid.uuid4().hex}"
+                        attachment_paths_by_ref[attachment_ref] = str(image_path.resolve())
+                        invocation_attachments.append(
+                            build_local_attachment_descriptor(
+                                image_path,
+                                kind="image",
+                                include_path=expose_paths,
+                                attachment_ref=attachment_ref,
+                            )
+                        )
+                    # --suppress-send only disables the CLI's final auto-delivery.
+                    # Tool calls still require a sender to execute explicit send actions.
                     tool_sender = TelegramClient(client_cfg, handler=_placeholder_handler)
                     execution_context = ToolExecutionContext(
                         execution_mode="one-shot",
@@ -1167,6 +1190,8 @@ def message(
                         subject_id=user_id,
                         subject_kind="chat",
                         platform=client_cfg.client_type,
+                        attachments=invocation_attachments,
+                        attachment_paths_by_ref=attachment_paths_by_ref,
                         sender=tool_sender,
                     )
                     async def _tool_aware_complete():

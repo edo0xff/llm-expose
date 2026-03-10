@@ -10,6 +10,88 @@ from typing import Any
 Message = dict[str, Any]
 
 
+def _parse_data_url(url: str) -> tuple[str | None, int | None]:
+    if not url.startswith("data:"):
+        return None, None
+
+    header, sep, payload = url.partition(",")
+    if not sep:
+        return None, None
+
+    media_type = "application/octet-stream"
+    if ";" in header:
+        media_type = header[5 : header.index(";")] or media_type
+    elif len(header) > 5:
+        media_type = header[5:]
+
+    size_bytes = None
+    if ";base64" in header:
+        stripped = payload.strip()
+        padded = stripped + "=" * (-len(stripped) % 4)
+        try:
+            size_bytes = len(base64.b64decode(padded, validate=False))
+        except Exception:
+            size_bytes = None
+
+    return media_type, size_bytes
+
+
+def extract_invocation_attachments(content: Any) -> list[dict[str, Any]]:
+    """Extract normalized attachment descriptors from user content blocks."""
+    if not isinstance(content, list):
+        return []
+
+    attachments: list[dict[str, Any]] = []
+    for index, part in enumerate(content):
+        if not isinstance(part, dict) or part.get("type") != "image_url":
+            continue
+
+        image_url = part.get("image_url")
+        if not isinstance(image_url, dict):
+            continue
+        url = image_url.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+
+        media_type, size_bytes = _parse_data_url(url)
+        descriptor: dict[str, Any] = {
+            "kind": "image",
+            "source_type": "data_url" if url.startswith("data:") else "url",
+            "media_type": media_type,
+            "filename": None,
+            "size_bytes": size_bytes,
+            "invocation_index": index,
+        }
+        if descriptor["source_type"] == "data_url":
+            descriptor["data_url"] = url
+        else:
+            descriptor["url"] = url
+        attachments.append(descriptor)
+
+    return attachments
+
+
+def build_local_attachment_descriptor(
+    path: str | Path,
+    *,
+    kind: str,
+    include_path: bool,
+    attachment_ref: str | None = None,
+) -> dict[str, Any]:
+    """Build a normalized descriptor for a local attachment path."""
+    file_path = Path(path).expanduser().resolve()
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    return {
+        "kind": kind,
+        "source_type": "local_path",
+        "media_type": media_type,
+        "filename": file_path.name,
+        "size_bytes": file_path.stat().st_size if file_path.exists() else None,
+        "path": str(file_path) if include_path else None,
+        "attachment_ref": attachment_ref,
+    }
+
+
 def extract_image_urls(content: Any) -> list[str]:
     """Extract image URLs from OpenAI-style multimodal content parts."""
     if not isinstance(content, list):

@@ -36,6 +36,8 @@ class ToolExecutionContext:
     initiator_user_id: str | None = None
     platform: str | None = None
     chat_type: str | None = None
+    attachments: list[dict[str, Any]] = field(default_factory=list)
+    attachment_paths_by_ref: dict[str, str] = field(default_factory=dict)
     sender: _MessageSenderProtocol | None = None
     invoked_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -54,6 +56,7 @@ class ToolExecutionContext:
             "initiator_user_id": self.initiator_user_id,
             "platform": self.platform,
             "chat_type": self.chat_type,
+            "attachments": list(self.attachments),
             "invoked_at": self.invoked_at,
         }
 
@@ -106,6 +109,7 @@ class _GetInvocationContextTool(_BuiltinTool):
             "initiator_user_id": None,
             "platform": None,
             "chat_type": None,
+            "attachments": [],
             "invoked_at": datetime.now(UTC).isoformat(),
         }
         return {
@@ -153,6 +157,42 @@ class _GetPairingIdsTool(_BuiltinTool):
         payload = {
             "channel_name": channel_name,
             "pairing_ids": pairing_ids,
+        }
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(payload, sort_keys=True),
+                }
+            ]
+        }
+
+
+class _GetInvocationAttachmentsTool(_BuiltinTool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="llm_expose_get_invocation_attachments",
+            description=(
+                "Return attachment descriptors for the current invocation, "
+                "including media type and source metadata. "
+                "Useful for sending files NOT for inferencing or completion."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        )
+
+    async def execute(
+        self,
+        arguments: dict[str, Any],
+        *,
+        execution_context: ToolExecutionContext | None,
+    ) -> dict[str, Any]:
+        del arguments
+        payload = {
+            "attachments": list(execution_context.attachments) if execution_context is not None else [],
         }
         return {
             "content": [
@@ -235,8 +275,15 @@ class _SendFileMessageTool(_BuiltinTool):
                         "type": "string",
                         "description": "Absolute or user-home-relative path to a local file.",
                     },
+                    "attachment_ref": {
+                        "type": "string",
+                        "description": (
+                            "Attachment reference returned by llm_expose_get_invocation_attachments. "
+                            "Use this when file_path is redacted or unavailable."
+                        ),
+                    },
                 },
-                "required": ["channel_id", "user_id", "file_path"],
+                "required": ["channel_id", "user_id"],
                 "additionalProperties": False,
             },
         )
@@ -254,12 +301,24 @@ class _SendFileMessageTool(_BuiltinTool):
         channel_id = _required_string(arguments, "channel_id")
         user_id = _required_string(arguments, "user_id")
         file_path_value = _required_string(arguments, "file_path")
-        if not channel_id or not user_id or not file_path_value:
-            return _error_result("channel_id, user_id, and file_path are required")
+        attachment_ref = _required_string(arguments, "attachment_ref")
+        if not channel_id or not user_id:
+            return _error_result("channel_id and user_id are required")
 
-        file_path = Path(file_path_value).expanduser().resolve()
+        file_path = _resolve_local_path(
+            execution_context,
+            provided_path=file_path_value,
+            attachment_ref=attachment_ref,
+        )
+        if file_path is None:
+            return _error_result(
+                "file_path or attachment_ref is required; call llm_expose_get_invocation_attachments to discover attachment_ref values"
+            )
+
         if not file_path.exists() or not file_path.is_file():
-            return _error_result(f"file not found: {file_path}")
+            return _error_result(
+                f"file not found: {file_path}; call llm_expose_get_invocation_attachments and use a valid attachment_ref"
+            )
 
         send_result = await sender.send_file(user_id, str(file_path))
         return _success_result(
@@ -290,8 +349,15 @@ class _SendImageMessageTool(_BuiltinTool):
                         "type": "string",
                         "description": "Absolute or user-home-relative path to a local image file.",
                     },
+                    "attachment_ref": {
+                        "type": "string",
+                        "description": (
+                            "Attachment reference returned by llm_expose_get_invocation_attachments. "
+                            "Use this when image_path is redacted or unavailable."
+                        ),
+                    },
                 },
-                "required": ["channel_id", "user_id", "image_path"],
+                "required": ["channel_id", "user_id"],
                 "additionalProperties": False,
             },
         )
@@ -309,12 +375,24 @@ class _SendImageMessageTool(_BuiltinTool):
         channel_id = _required_string(arguments, "channel_id")
         user_id = _required_string(arguments, "user_id")
         image_path_value = _required_string(arguments, "image_path")
-        if not channel_id or not user_id or not image_path_value:
-            return _error_result("channel_id, user_id, and image_path are required")
+        attachment_ref = _required_string(arguments, "attachment_ref")
+        if not channel_id or not user_id:
+            return _error_result("channel_id and user_id are required")
 
-        image_path = Path(image_path_value).expanduser().resolve()
+        image_path = _resolve_local_path(
+            execution_context,
+            provided_path=image_path_value,
+            attachment_ref=attachment_ref,
+        )
+        if image_path is None:
+            return _error_result(
+                "image_path or attachment_ref is required; call llm_expose_get_invocation_attachments to discover attachment_ref values"
+            )
+
         if not image_path.exists() or not image_path.is_file():
-            return _error_result(f"file not found: {image_path}")
+            return _error_result(
+                f"file not found: {image_path}; call llm_expose_get_invocation_attachments and use a valid attachment_ref"
+            )
 
         data_url = file_to_data_url(image_path)
         send_result = await sender.send_images(user_id, [data_url])
@@ -331,6 +409,25 @@ def _required_string(arguments: dict[str, Any], key: str) -> str:
     if isinstance(value, str):
         return value.strip()
     return ""
+
+
+def _resolve_local_path(
+    execution_context: ToolExecutionContext | None,
+    *,
+    provided_path: str,
+    attachment_ref: str,
+) -> Path | None:
+    if provided_path:
+        return Path(provided_path).expanduser().resolve()
+
+    if not attachment_ref or execution_context is None:
+        return None
+
+    mapped_path = execution_context.attachment_paths_by_ref.get(attachment_ref)
+    if not mapped_path:
+        return None
+
+    return Path(mapped_path).expanduser().resolve()
 
 
 def _error_result(error: str) -> dict[str, Any]:
@@ -378,6 +475,7 @@ class BuiltinMCPClient:
             for tool in [
                 _GetInvocationContextTool(),
                 _GetPairingIdsTool(),
+                _GetInvocationAttachmentsTool(),
                 _SendTextMessageTool(),
                 _SendFileMessageTool(),
                 _SendImageMessageTool(),

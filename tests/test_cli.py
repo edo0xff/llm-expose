@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import typer
 
-from llm_expose.config.models import MCPConfig, ProviderConfig, TelegramClientConfig
+from llm_expose.config.models import MCPConfig, MCPSettingsConfig, ProviderConfig, TelegramClientConfig
 from llm_expose.cli.main import (
     add_pair_cmd,
     add_channel,
@@ -332,7 +332,7 @@ class TestCliHelpers:
         assert result["message_id"] == "99"
         assert result["file_reference"]["message_id"] == "100"
 
-    def test_message_tool_aware_completion_injects_sender_into_execution_context(self) -> None:
+    def test_message_tool_aware_completion_suppress_send_keeps_sender_for_tools(self) -> None:
         client_cfg = TelegramClientConfig(
             bot_token="123:tok",
             model_name="ops-model",
@@ -372,9 +372,58 @@ class TestCliHelpers:
                 image=[],
             )
 
-        assert client_cls_mock.called
+        client_cls_mock.assert_called_once()
         execution_context = handler_mock.complete.await_args.kwargs["execution_context"]
         assert execution_context.sender is client_cls_mock.return_value
+
+    def test_message_tool_aware_completion_includes_redacted_attachment_descriptor(self, tmp_path) -> None:
+        image_path = tmp_path / "camera.jpg"
+        image_path.write_bytes(b"abc")
+
+        client_cfg = TelegramClientConfig(
+            bot_token="123:tok",
+            model_name="ops-model",
+            mcp_servers=["builtin-core"],
+        )
+        provider_cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o-mini",
+            api_key="secret",
+            base_url=None,
+        )
+
+        handler_mock = AsyncMock()
+        handler_mock.complete = AsyncMock(return_value="Generated reply")
+
+        with patch("llm_expose.cli.main.load_channel", return_value=client_cfg), patch(
+            "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
+        ), patch("llm_expose.cli.main.load_model", return_value=provider_cfg), patch(
+            "llm_expose.cli.main.load_mcp_config",
+            return_value=MCPConfig(settings=MCPSettingsConfig(expose_attachment_paths=False)),
+        ), patch("llm_expose.cli.main.LiteLLMProvider"), patch(
+            "llm_expose.cli.main.ToolAwareCompletion"
+        ) as completion_cls_mock, patch("llm_expose.cli.main.console.print"):
+            completion_cls_mock.return_value.__aenter__.return_value = handler_mock
+            completion_cls_mock.return_value.__aexit__.return_value = None
+
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Draft a reply",
+                llm_completion=True,
+                suppress_send=True,
+                system_prompt_file=None,
+                image=[str(image_path)],
+            )
+
+        execution_context = handler_mock.complete.await_args.kwargs["execution_context"]
+        assert len(execution_context.attachments) == 1
+        assert execution_context.attachments[0]["filename"] == "camera.jpg"
+        assert execution_context.attachments[0]["path"] is None
+        attachment_ref = execution_context.attachments[0]["attachment_ref"]
+        assert isinstance(attachment_ref, str)
+        assert attachment_ref.startswith("att_")
+        assert execution_context.attachment_paths_by_ref[attachment_ref] == str(image_path.resolve())
 
     def test_message_file_not_found_exits(self) -> None:
         with pytest.raises(typer.Exit) as exc_info, patch(

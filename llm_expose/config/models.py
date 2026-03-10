@@ -171,6 +171,13 @@ class MCPSettingsConfig(BaseModel):
         le=300,
         description="Max tool execution time in seconds",
     )
+    expose_attachment_paths: bool = Field(
+        default=False,
+        description=(
+            "Expose local absolute attachment paths in tool execution context. "
+            "When disabled, only non-sensitive metadata is exposed."
+        ),
+    )
 
 
 class MCPConfig(BaseModel):
