@@ -286,3 +286,97 @@ class TestCliHelpers:
         assert result["message_id"] == "99"
         assert result["llm_response"] == "Generated reply"
         assert result["llm_model"] == "ops-model"
+
+    def test_message_with_file_sends_text_and_file(self) -> None:
+        client_cfg = TelegramClientConfig(bot_token="123:tok")
+
+        with patch("llm_expose.cli.main.load_channel", return_value=client_cfg), patch(
+            "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
+        ), patch("llm_expose.cli.main.TelegramClient") as client_cls_mock, patch(
+            "llm_expose.cli.main.asyncio.run",
+            side_effect=[
+                {
+                    "message_id": "99",
+                    "timestamp": "2026-03-10T00:00:00Z",
+                    "status": "sent",
+                    "user_id": "12345",
+                },
+                {
+                    "message_id": "100",
+                    "timestamp": "2026-03-10T00:00:01Z",
+                    "status": "sent",
+                    "user_id": "12345",
+                    "file_name": "report.pdf",
+                },
+            ],
+        ) as asyncio_run_mock, patch("llm_expose.cli.main.console.print") as print_mock, patch(
+            "llm_expose.cli.main.Path"
+        ) as path_mock:
+            path_instance = path_mock.return_value.expanduser.return_value
+            path_instance.exists.return_value = True
+            path_instance.is_file.return_value = True
+            path_instance.__str__.return_value = "C:/tmp/report.pdf"
+
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Some file is here:",
+                llm_completion=False,
+                suppress_send=False,
+                system_prompt_file=None,
+                image=[],
+                file="C:/tmp/report.pdf",
+            )
+
+        client_cls_mock.assert_called_once()
+        client_mock = client_cls_mock.return_value
+        client_mock.send_message.assert_called_once_with("12345", "Some file is here:")
+        client_mock.send_file.assert_called_once_with("12345", "C:/tmp/report.pdf")
+        assert asyncio_run_mock.call_count == 1
+
+        result = json.loads(print_mock.call_args.args[0])
+        assert result["status"] == "sent"
+        assert result["message_id"] == "99"
+        assert result["file_reference"]["message_id"] == "100"
+
+    def test_message_file_not_found_exits(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.console.print"
+        ) as print_mock, patch("llm_expose.cli.main.Path") as path_mock:
+            path_instance = path_mock.return_value.expanduser.return_value
+            path_instance.exists.return_value = False
+            path_instance.is_file.return_value = False
+
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Some file is here:",
+                llm_completion=False,
+                suppress_send=False,
+                system_prompt_file=None,
+                image=[],
+                file="C:/tmp/missing.pdf",
+            )
+
+        assert exc_info.value.exit_code == 1
+        print_mock.assert_called_once_with("[red]Error: File not found: C:/tmp/missing.pdf[/red]")
+
+    def test_message_file_conflicts_with_llm_completion(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.console.print"
+        ) as print_mock:
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Draft this",
+                llm_completion=True,
+                suppress_send=False,
+                system_prompt_file=None,
+                image=[],
+                file="C:/tmp/report.pdf",
+            )
+
+        assert exc_info.value.exit_code == 1
+        print_mock.assert_called_once_with(
+            "[red]Error: --file cannot be used with --llm-completion.[/red]"
+        )

@@ -7,6 +7,7 @@ import base64
 import logging
 import mimetypes
 from datetime import datetime as dt, timezone
+from pathlib import Path
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
@@ -417,6 +418,42 @@ class TelegramClient(BaseClient):
             "count": len(sent_items),
             "items": sent_items,
         }
+
+    async def send_file(self, user_id: str, file_path: str) -> dict:
+        """Send a local file to a specific Telegram chat as a document."""
+        if self._app is None:
+            self._app = Application.builder().token(self._config.bot_token).build()
+            await self._app.initialize()
+
+        resolved_path = Path(file_path).expanduser()
+        if not resolved_path.exists() or not resolved_path.is_file():
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        try:
+            with resolved_path.open("rb") as handle:
+                payload = InputFile(handle, filename=resolved_path.name)
+                message = await self._app.bot.send_document(
+                    chat_id=user_id,
+                    document=payload,
+                )
+
+            document = getattr(message, "document", None)
+            file_id = getattr(document, "file_id", None)
+            return {
+                "message_id": str(message.message_id),
+                "timestamp": dt.now(timezone.utc).isoformat(),
+                "status": "sent",
+                "user_id": user_id,
+                "file_name": resolved_path.name,
+                "file_id": str(file_id) if file_id else None,
+            }
+        except BadRequest as exc:
+            logger.error(
+                "Failed to send file to user %s: %s",
+                user_id,
+                exc,
+            )
+            raise
 
     async def stop(self) -> None:
         """Stop polling and shut down the Telegram application."""

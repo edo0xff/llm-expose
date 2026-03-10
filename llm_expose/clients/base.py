@@ -99,6 +99,18 @@ class BaseClient(ABC):
             A dict with provider-specific send metadata.
         """
 
+    @abstractmethod
+    async def send_file(self, user_id: str, file_path: str) -> dict:
+        """Send a local file directly to a specific user.
+
+        Args:
+            user_id: The user/chat ID to send the file to.
+            file_path: Path to a local file.
+
+        Returns:
+            A dict with provider-specific send metadata.
+        """
+
     def set_handler(self, handler: MessageHandler) -> None:
         """Replace the current message handler with *handler*.
 

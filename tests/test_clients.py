@@ -240,6 +240,41 @@ class TestTelegramClientHandlers:
             photo="https://example.com/reference.jpg",
         )
 
+    @pytest.mark.asyncio
+    async def test_send_file_sends_document(self, tmp_path) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+        client = TelegramClient(cfg, handler=AsyncMock())
+
+        file_path = tmp_path / "report.pdf"
+        file_path.write_bytes(b"pdf-content")
+
+        message = MagicMock()
+        message.message_id = 77
+        message.document = MagicMock(file_id="telegram-file-1")
+
+        client._app = MagicMock()
+        client._app.bot.send_document = AsyncMock(return_value=message)
+
+        result = await client.send_file("42", str(file_path))
+
+        client._app.bot.send_document.assert_awaited_once()
+        send_kwargs = client._app.bot.send_document.await_args.kwargs
+        assert send_kwargs["chat_id"] == "42"
+        assert result["status"] == "sent"
+        assert result["user_id"] == "42"
+        assert result["message_id"] == "77"
+        assert result["file_name"] == "report.pdf"
+        assert result["file_id"] == "telegram-file-1"
+
+    @pytest.mark.asyncio
+    async def test_send_file_raises_when_missing(self, tmp_path) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+        client = TelegramClient(cfg, handler=AsyncMock())
+
+        missing_path = tmp_path / "missing.pdf"
+        with pytest.raises(FileNotFoundError):
+            await client.send_file("42", str(missing_path))
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator

@@ -978,6 +978,12 @@ def message(
         "-i",
         help="Path to an image file to include in LLM input (repeatable).",
     ),
+    file: Optional[str] = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="Path to a local file to send directly (without LLM processing).",
+    ),
 ) -> None:
     """Send a direct message to a specific user in a channel.
     
@@ -989,12 +995,16 @@ def message(
 
     With --llm-completion --suppress-send, the LLM response is generated and
     returned in the JSON output, but no message or image is delivered to the user.
+
+    With --file, the text is sent directly and then the file is sent as a
+    document attachment to the same user.
     
     Examples:
         llm-expose message support 12345 "System is down"
         llm-expose message alerts 67890 "CPU at 95%. Generate a brief alert." --llm-completion
         llm-expose message news 12345 "Summarize today's headlines" --llm-completion --system-prompt-file /path/to/prompt.txt
         llm-expose message ops 12345 "Draft a reply and decide later whether to send it" --llm-completion --suppress-send
+        llm-expose message ops 12345 "Some file is here:" -f /path/to/file.pdf
     
     This command is useful for cron jobs and scheduled notifications.
     User must be paired with the channel (run 'llm-expose add pair' if needed).
@@ -1019,6 +1029,17 @@ def message(
     if suppress_send and not llm_completion:
         console.print("[red]Error: --suppress-send requires --llm-completion.[/red]")
         raise typer.Exit(code=1)
+
+    if file and llm_completion:
+        console.print("[red]Error: --file cannot be used with --llm-completion.[/red]")
+        raise typer.Exit(code=1)
+
+    file_path: Optional[Path] = None
+    if file:
+        file_path = Path(file).expanduser()
+        if not file_path.exists() or not file_path.is_file():
+            console.print(f"[red]Error: File not found: {file}[/red]")
+            raise typer.Exit(code=1)
 
     # Load channel configuration
     try:
@@ -1202,12 +1223,21 @@ def message(
             # Client requires a handler, but send_message() doesn't use it
             client = TelegramClient(client_cfg, handler=_placeholder_handler)
 
-            # Run async send_message in event loop
-            result = asyncio.run(client.send_message(user_id, final_message))
+            # Keep a single event loop for all send operations in this CLI invocation.
+            async def _send_all() -> dict:
+                send_result = await client.send_message(user_id, final_message)
 
-            if llm_completion and image_data_urls:
-                image_result = asyncio.run(client.send_images(user_id, image_data_urls[:1]))
-                result["image_reference"] = image_result
+                if file_path is not None:
+                    file_result = await client.send_file(user_id, str(file_path))
+                    send_result["file_reference"] = file_result
+
+                if llm_completion and image_data_urls:
+                    image_result = await client.send_images(user_id, image_data_urls[:1])
+                    send_result["image_reference"] = image_result
+
+                return send_result
+
+            result = asyncio.run(_send_all())
         
         # Extend result with LLM metadata if applicable
         if llm_completion and llm_response_text:
