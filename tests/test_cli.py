@@ -60,7 +60,7 @@ class TestCliHelpers:
         saved_cfg = save_channel_mock.call_args.args[1]
         assert saved_cfg.bot_token == "123:tok"
         assert saved_cfg.mcp_servers == ["mcp-a"]
-        assert saved_cfg.system_prompt is None
+        assert saved_cfg.system_prompt_path is None
 
     def test_add_channel_saves_with_custom_system_prompt(self) -> None:
         with patch("llm_expose.cli.main._print_banner"), patch(
@@ -82,7 +82,7 @@ class TestCliHelpers:
             add_channel()
 
         saved_cfg = save_channel_mock.call_args.args[1]
-        assert saved_cfg.system_prompt == "Channel prompt"
+        assert saved_cfg.system_prompt_path == "/tmp/prompt.txt"
 
     def test_add_pair_cmd_with_args(self) -> None:
         with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(

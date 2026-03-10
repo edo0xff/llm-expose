@@ -41,9 +41,9 @@ class TelegramClientConfig(BaseModel):
         default_factory=list,
         description="List of MCP server names attached to this channel",
     )
-    system_prompt: Optional[str] = Field(
+    system_prompt_path: Optional[str] = Field(
         default=None,
-        description="Custom system prompt for this channel. Falls back to default when omitted.",
+        description="Path to a file containing the custom system prompt for this channel. Falls back to default when omitted.",
     )
     model_name: Optional[str] = Field(
         default=None,
@@ -72,10 +72,10 @@ class TelegramClientConfig(BaseModel):
             normalized.append(name)
         return normalized
 
-    @field_validator("system_prompt")
+    @field_validator("system_prompt_path")
     @classmethod
-    def normalize_system_prompt(cls, value: Optional[str]) -> Optional[str]:
-        """Normalize optional channel system prompt by trimming outer whitespace."""
+    def validate_system_prompt_path(cls, value: Optional[str]) -> Optional[str]:
+        """Validate system prompt path by trimming outer whitespace."""
         if value is None:
             return None
         normalized = value.strip()

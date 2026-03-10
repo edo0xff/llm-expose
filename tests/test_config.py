@@ -104,19 +104,35 @@ class TestTelegramClientConfig:
         )
         assert cfg.mcp_servers == ["foo", "bar", "baz"]
 
-    def test_system_prompt_strips_outer_whitespace(self) -> None:
+    def test_system_prompt_path_strips_outer_whitespace(self) -> None:
         cfg = TelegramClientConfig(
             bot_token="123456:ABC",
-            system_prompt="  You are channel-specific.  ",
+            system_prompt_path="  /path/to/prompt.txt  ",
         )
-        assert cfg.system_prompt == "You are channel-specific."
+        assert cfg.system_prompt_path == "/path/to/prompt.txt"
 
-    def test_system_prompt_whitespace_only_becomes_none(self) -> None:
+    def test_system_prompt_path_whitespace_only_becomes_none(self) -> None:
         cfg = TelegramClientConfig(
             bot_token="123456:ABC",
-            system_prompt="   ",
+            system_prompt_path="   ",
         )
-        assert cfg.system_prompt is None
+        assert cfg.system_prompt_path is None
+
+    def test_system_prompt_path_accepts_any_path(self) -> None:
+        """Test that system_prompt_path accepts arbitrary file paths."""
+        cfg = TelegramClientConfig(
+            bot_token="123456:ABC",
+            system_prompt_path="/home/user/my_prompt.txt",
+        )
+        assert cfg.system_prompt_path == "/home/user/my_prompt.txt"
+
+    def test_system_prompt_path_with_relative_path(self) -> None:
+        """Test that system_prompt_path accepts relative paths."""
+        cfg = TelegramClientConfig(
+            bot_token="123456:ABC",
+            system_prompt_path="./prompts/my_prompt.md",
+        )
+        assert cfg.system_prompt_path == "./prompts/my_prompt.md"
 
 
 class TestMCPConfig:
@@ -236,7 +252,7 @@ class TestChannelLoader:
         assert loaded.client_type == cfg.client_type
         assert loaded.bot_token == cfg.bot_token
 
-    def test_save_and_load_roundtrip_with_system_prompt(
+    def test_save_and_load_roundtrip_with_system_prompt_path(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -245,7 +261,7 @@ class TestChannelLoader:
         cfg = TelegramClientConfig(
             bot_token="123:tok",
             mcp_servers=["filesystem"],
-            system_prompt="You are a bot for this channel.",
+            system_prompt_path="/etc/prompts/channel.txt",
         )
 
         save_channel("channel-with-prompt", cfg)
@@ -253,7 +269,7 @@ class TestChannelLoader:
 
         assert loaded.bot_token == "123:tok"
         assert loaded.mcp_servers == ["filesystem"]
-        assert loaded.system_prompt == "You are a bot for this channel."
+        assert loaded.system_prompt_path == "/etc/prompts/channel.txt"
 
     def test_load_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
@@ -301,7 +317,7 @@ class TestChannelLoader:
         loaded = load_channel("legacy")
         assert loaded.bot_token == "123:tok"
         assert loaded.mcp_servers == []
-        assert loaded.system_prompt is None
+        assert loaded.system_prompt_path is None
 
 
 class TestMCPLoader:

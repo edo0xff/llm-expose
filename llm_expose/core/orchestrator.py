@@ -8,6 +8,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from llm_expose.clients.base import BaseClient, MessageResponse
@@ -61,8 +62,10 @@ class Orchestrator:
         # Per-channel conversation histories (keyed by channel ID).
         # Each channel gets its own history with the configured system prompt.
         self._histories: dict[str, list[Message]] = {}
-        # Use custom system prompt from channel config, or fall back to default.
-        self._system_prompt = config.client.system_prompt or _DEFAULT_SYSTEM_PROMPT
+        # Store path to system prompt file for lazy loading
+        self._system_prompt_path = config.client.system_prompt_path
+        # Cache the loaded system prompt content
+        self._loaded_system_prompt: str | None = None
         # Backward compatibility for older tests/callers that access _history
         # or call _handle_message(user_message) without a channel ID.
         self._default_channel_id = "__default__"
@@ -119,6 +122,55 @@ class Orchestrator:
             await self._mcp_runtime.initialize()
             self._mcp_runtime_initialized = True
 
+    def _load_system_prompt(self) -> str:
+        """Load the system prompt from file, with fallback to default.
+        
+        If system_prompt_path is configured:
+        - Reads the file and returns its contents (trimmed).
+        - If file doesn't exist: logs warning, emits CLI warning, returns default prompt.
+        
+        If no path is configured:
+        - Returns the default system prompt.
+        
+        Caches the result after the first load to avoid repeated file I/O.
+        
+        Returns:
+            The system prompt text to use.
+        """
+        # Return cached result if already loaded
+        if self._loaded_system_prompt is not None:
+            return self._loaded_system_prompt
+        
+        # No custom prompt path configured, use default
+        if not self._system_prompt_path:
+            self._loaded_system_prompt = _DEFAULT_SYSTEM_PROMPT
+            return self._loaded_system_prompt
+        
+        # Try to read the prompt file
+        prompt_file = Path(self._system_prompt_path)
+        if not prompt_file.exists():
+            warning_msg = f"System prompt file not found: {self._system_prompt_path}"
+            logger.warning(warning_msg)
+            # Store warning for CLI to display (will be picked up during startup)
+            if not hasattr(self, '_startup_warnings'):
+                self._startup_warnings: list[str] = []
+            self._startup_warnings.append(warning_msg)
+            self._loaded_system_prompt = _DEFAULT_SYSTEM_PROMPT
+            return self._loaded_system_prompt
+        
+        try:
+            content = prompt_file.read_text(encoding='utf-8').strip()
+            self._loaded_system_prompt = content if content else _DEFAULT_SYSTEM_PROMPT
+            return self._loaded_system_prompt
+        except Exception as e:
+            error_msg = f"Error reading system prompt file {self._system_prompt_path}: {e}"
+            logger.warning(error_msg)
+            if not hasattr(self, '_startup_warnings'):
+                self._startup_warnings: list[str] = []
+            self._startup_warnings.append(error_msg)
+            self._loaded_system_prompt = _DEFAULT_SYSTEM_PROMPT
+            return self._loaded_system_prompt
+
     def _get_or_create_history(self, channel_id: str) -> list[Message]:
         """Get the conversation history for a channel, creating it if needed.
 
@@ -132,7 +184,7 @@ class Orchestrator:
             logger.debug("Creating new conversation history for channel %s", channel_id)
 
             # Build system prompt with MCP server instructions
-            system_content = self._system_prompt
+            system_content = self._load_system_prompt()
 
             # Add MCP server instructions if runtime is available and initialized
             # Use getattr to handle cases where _mcp_runtime may not be set yet (during __init__)

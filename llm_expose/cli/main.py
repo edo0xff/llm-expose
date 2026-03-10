@@ -232,7 +232,7 @@ def add_model() -> None:
 
     if provider_type.startswith("Online"):
         from litellm import validate_environment, models_by_provider
-        
+
         online_provider = _select_from_list(
             "Select online provider:",
             list(models_by_provider.keys()),
@@ -348,27 +348,29 @@ def add_channel() -> None:
     available_mcp_servers = list_mcp_servers()
     attached_mcp_servers = _select_mcp_servers_for_channel(available_mcp_servers)
 
-    system_prompt: Optional[str] = None
+    system_prompt_path: Optional[str] = None
     if Confirm.ask("\n[bold]Do you want to set a custom system prompt for this channel?[/bold]", default=False):
         while True:
             prompt_path = Prompt.ask("  Enter path to system prompt text file")
             try:
+                # Verify the file exists and is readable
                 with open(prompt_path, "r", encoding="utf-8") as f:
-                    system_prompt = f.read()
+                    f.read()  # Just verify we can read it
+                system_prompt_path = prompt_path
                 break
             except Exception as exc:
-                console.print(f"[red]Failed to load system prompt from '{prompt_path}': {exc}[/red]")
+                console.print(f"[red]Failed to access system prompt file '{prompt_path}': {exc}[/red]")
                 if not Confirm.ask("Do you want to try again?", default=True):
-                    system_prompt = None
+                    system_prompt_path = None
                     break
 
-        if system_prompt:
-            console.print("\n[green]Custom system prompt loaded successfully![/green]")
+        if system_prompt_path:
+            console.print("\n[green]System prompt file path configured successfully![/green]")
 
     client_cfg = TelegramClientConfig(
         bot_token=bot_token,
         mcp_servers=attached_mcp_servers,
-        system_prompt=system_prompt,
+        system_prompt_path=system_prompt_path,
         model_name=model_name,
     )
 
@@ -869,8 +871,8 @@ def start() -> None:
         ", ".join(client_cfg.mcp_servers) if client_cfg.mcp_servers else "[dim]none[/dim]",
     )
     summary_table.add_row(
-        "System Prompt",
-        client_cfg.system_prompt if client_cfg.system_prompt else "[dim]default[/dim]",
+        "System Prompt Path",
+        client_cfg.system_prompt_path if client_cfg.system_prompt_path else "[dim]none (using default)[/dim]",
     )
     console.print(summary_table)
 
@@ -881,6 +883,16 @@ def start() -> None:
         )
     else:
         console.print("\n[bold cyan]MCP attached to this channel:[/bold cyan] none")
+
+    # Check if system prompt file exists (if configured)
+    if client_cfg.system_prompt_path:
+        from pathlib import Path
+        prompt_file = Path(client_cfg.system_prompt_path)
+        if not prompt_file.exists():
+            console.print(
+                f"\n[yellow]Warning: System prompt file not found: {client_cfg.system_prompt_path}[/yellow]\n"
+                "[yellow]The default system prompt will be used instead.[/yellow]"
+            )
 
     if not Confirm.ask("\n[bold]Start the service?[/bold]"):
         console.print("[yellow]Cancelled.[/yellow]")
@@ -1016,7 +1028,9 @@ def message(
             raise typer.Exit(code=1)
 
         # Determine system prompt (override or channel's)
-        system_prompt = client_cfg.system_prompt
+        system_prompt: Optional[str] = None
+        
+        # First try the override file if provided
         if system_prompt_file:
             try:
                 with open(system_prompt_file, "r", encoding="utf-8") as f:
@@ -1029,6 +1043,20 @@ def message(
                 raise typer.Exit(code=1)
             except Exception as exc:
                 console.print(f"[red]Error: Failed to read system prompt file: {exc}[/red]")
+                raise typer.Exit(code=1)
+        # Otherwise try the channel's configured prompt path
+        elif client_cfg.system_prompt_path:
+            try:
+                with open(client_cfg.system_prompt_path, "r", encoding="utf-8") as f:
+                    system_prompt = f.read()
+                if not system_prompt.strip():
+                    console.print(f"[red]Error: Channel's system prompt file is empty.[/red]")
+                    raise typer.Exit(code=1)
+            except FileNotFoundError:
+                console.print(f"[red]Error: Channel's system prompt file '{client_cfg.system_prompt_path}' not found.[/red]")
+                raise typer.Exit(code=1)
+            except Exception as exc:
+                console.print(f"[red]Error: Failed to read channel's system prompt file: {exc}[/red]")
                 raise typer.Exit(code=1)
 
         # Use default system prompt if none provided

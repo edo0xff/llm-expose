@@ -315,21 +315,33 @@ class TestOrchestrator:
         assert len(orch._history) == 5
 
     def test_orchestrator_uses_channel_system_prompt(self) -> None:
-        config = ExposureConfig(
-            name="test",
-            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(
-                bot_token="123:tok",
-                system_prompt="You are specialized for this channel.",
-            ),
-        )
-        provider = MagicMock()
-        client = MagicMock()
+        import tempfile
+        from pathlib import Path
+        
+        # Create a temporary prompt file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            f.write("You are specialized for this channel.")
+            temp_prompt_path = f.name
+        
+        try:
+            config = ExposureConfig(
+                name="test",
+                provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+                client=TelegramClientConfig(
+                    bot_token="123:tok",
+                    system_prompt_path=temp_prompt_path,
+                ),
+            )
+            provider = MagicMock()
+            client = MagicMock()
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()):
-            orch = Orchestrator(config=config, provider=provider, client=client)
+            with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()):
+                orch = Orchestrator(config=config, provider=provider, client=client)
 
-        assert orch._history[0]["content"] == "You are specialized for this channel."
+            assert orch._history[0]["content"] == "You are specialized for this channel."
+        finally:
+            # Clean up temporary file
+            Path(temp_prompt_path).unlink()
 
     def test_orchestrator_uses_default_prompt_when_channel_prompt_missing(self) -> None:
         orch, _, _ = self._make_orchestrator()

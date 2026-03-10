@@ -89,7 +89,16 @@ class TelegramClient(BaseClient):
         """Handle the /start command."""
         if update.message:
             await update.message.reply_text(
-                "👋 Hello! I'm powered by an LLM. Send me a message and I'll reply!"
+                "👋 Hello! I'm a telegram bot powered by an LLM. Let's setup some configurations!"
+            )
+            await update.message.reply_text(
+                "1) Let me know how should I call you? Please reply with your name or nickname."
+            )
+            await update.message.reply_text(
+                "2) Second, please tell me how I should behave? You can specify a system prompt to guide my responses. For example, you can say 'You are a helpful assistant that provides concise answers.' Or something simplier like 'Be friendly and use emojis!'"
+            )
+            await update.message.reply_text(
+                "3) Finally, you can specify any additional instructions or preferences for our interactions. For example, you can say 'Quiero que me respondas en español' or any other instructions!"
             )
 
     async def _handle_message(
