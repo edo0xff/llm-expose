@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from llm_expose.core.outbound_dispatch import (
+    OutboundMessageError,
+    dispatch_channel_message,
+)
+
 
 @dataclass(slots=True)
 class ToolExecutionContext:
@@ -57,6 +62,18 @@ class _BuiltinTool:
         raise NotImplementedError
 
 
+def _json_text_result(payload: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a JSON payload in MCP text content blocks."""
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(payload, sort_keys=True),
+            }
+        ]
+    }
+
+
 class _GetInvocationContextTool(_BuiltinTool):
     def __init__(self) -> None:
         super().__init__(
@@ -92,14 +109,87 @@ class _GetInvocationContextTool(_BuiltinTool):
             "chat_type": None,
             "invoked_at": datetime.now(UTC).isoformat(),
         }
-        return {
-            "content": [
+        return _json_text_result(payload)
+
+
+class _SendMessageTool(_BuiltinTool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="llm_expose_send_message",
+            description=(
+                "Send a text message to a paired recipient in the current channel. "
+                "The recipient must already be paired with that channel."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target_user_id": {
+                        "type": "string",
+                        "description": "Recipient user/chat ID already paired with the current channel.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Message text to send.",
+                    },
+                },
+                "required": ["target_user_id", "text"],
+                "additionalProperties": False,
+            },
+        )
+
+    async def execute(
+        self,
+        arguments: dict[str, Any],
+        *,
+        execution_context: ToolExecutionContext | None,
+    ) -> dict[str, Any]:
+        channel_name = execution_context.channel_name if execution_context is not None else None
+        target_user_id = str(arguments.get("target_user_id", "")).strip()
+        text = str(arguments.get("text", ""))
+
+        if not channel_name:
+            return _json_text_result(
                 {
-                    "type": "text",
-                    "text": json.dumps(payload, sort_keys=True),
+                    "status": "error",
+                    "error": "Cannot send a message because the current channel context is unavailable.",
+                    "target_user_id": target_user_id or None,
                 }
-            ]
-        }
+            )
+
+        if not target_user_id:
+            return _json_text_result(
+                {
+                    "status": "error",
+                    "error": "target_user_id is required.",
+                    "channel_name": channel_name,
+                }
+            )
+
+        if not text.strip():
+            return _json_text_result(
+                {
+                    "status": "error",
+                    "error": "text is required.",
+                    "channel_name": channel_name,
+                    "target_user_id": target_user_id,
+                }
+            )
+
+        try:
+            payload = await dispatch_channel_message(
+                channel_name,
+                target_user_id,
+                text,
+            )
+        except OutboundMessageError as exc:
+            payload = {
+                "status": "error",
+                "error": str(exc),
+                "channel_name": channel_name,
+                "target_user_id": target_user_id,
+            }
+
+        return _json_text_result(payload)
 
 
 class BuiltinMCPClient:
@@ -111,6 +201,7 @@ class BuiltinMCPClient:
             tool.name: tool
             for tool in [
                 _GetInvocationContextTool(),
+                _SendMessageTool(),
             ]
         }
 

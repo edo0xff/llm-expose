@@ -46,6 +46,7 @@ from llm_expose.config import (
 from llm_expose.config.models import ExposureConfig
 from llm_expose.core.builtin_mcp import ToolExecutionContext
 from llm_expose.core.content_parts import build_user_content, file_to_data_url
+from llm_expose.core.outbound_dispatch import dispatch_channel_message
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.litellm_provider import LiteLLMProvider
@@ -1220,24 +1221,15 @@ def message(
                 "timestamp": datetime.now(UTC).isoformat(),
             }
         else:
-            # Client requires a handler, but send_message() doesn't use it
-            client = TelegramClient(client_cfg, handler=_placeholder_handler)
-
-            # Keep a single event loop for all send operations in this CLI invocation.
-            async def _send_all() -> dict:
-                send_result = await client.send_message(user_id, final_message)
-
-                if file_path is not None:
-                    file_result = await client.send_file(user_id, str(file_path))
-                    send_result["file_reference"] = file_result
-
-                if llm_completion and image_data_urls:
-                    image_result = await client.send_images(user_id, image_data_urls[:1])
-                    send_result["image_reference"] = image_result
-
-                return send_result
-
-            result = asyncio.run(_send_all())
+            result = asyncio.run(
+                dispatch_channel_message(
+                    channel,
+                    user_id,
+                    final_message,
+                    file_path=str(file_path) if file_path is not None else None,
+                    image_urls=image_data_urls[:1] if llm_completion and image_data_urls else None,
+                )
+            )
         
         # Extend result with LLM metadata if applicable
         if llm_completion and llm_response_text:
