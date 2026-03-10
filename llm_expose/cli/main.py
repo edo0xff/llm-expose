@@ -231,7 +231,27 @@ def add_model() -> None:
     )
 
     if provider_type.startswith("Online"):
-        from litellm import validate_environment, models_by_provider
+        from litellm import validate_environment, model_cost
+
+        models_by_provider = {}
+
+        # model cost schema from https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
+        for key, value in model_cost.items():
+            provider = value.get("litellm_provider", "unknown").lower()
+            mode = value.get("mode", "unknown").lower()
+
+            if not mode in ("chat", "completion"):
+                continue
+            
+            model_supports = []
+            model_supports += ["[green]tools[/green]"] if value.get("supports_function_calling", False) else []
+            model_supports += ["[yellow]vision[/yellow]"] if value.get("supports_vision", False) else []
+            model_supports = f" ({', '.join(model_supports)})" if model_supports else ""
+
+            if provider not in models_by_provider:
+                models_by_provider[provider] = []
+
+            models_by_provider[provider].append(key + model_supports)
 
         online_provider = _select_from_list(
             "Select online provider:",
@@ -247,12 +267,11 @@ def add_model() -> None:
                 f"Select model for {online_provider}:",
                 available_models,
             )
-            if selected_model == "other":
-                online_provider = Prompt.ask("  Enter provider name (as recognised by LiteLLM visit: https://models.litellm.ai/ for best compatibility)")
-                model = Prompt.ask(f"  Enter model name for [cyan]{online_provider}[/cyan]")
-            else:
-                model = selected_model
-        
+
+            # Remove model supports info
+            selected_model = selected_model.split(model_supports)[0].strip()
+            model = selected_model
+
         provider_name = online_provider.lower().strip()
         base_url: Optional[str] = None
     else:
