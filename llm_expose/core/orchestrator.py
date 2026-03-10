@@ -317,6 +317,7 @@ class Orchestrator:
             initiator_user_id=initiator_user_id,
             platform=str(platform) if platform is not None else None,
             chat_type=chat_type,
+            sender=self._client,
         )
 
     @staticmethod

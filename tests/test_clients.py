@@ -648,6 +648,7 @@ class TestOrchestrator:
         assert execution_context.subject_kind == "user"
         assert execution_context.initiator_user_id == "42"
         assert execution_context.platform == "telegram"
+        assert execution_context.sender is client
 
     @pytest.mark.asyncio
     async def test_handle_message_skips_disabled_or_invalid_mcp_servers(self) -> None:

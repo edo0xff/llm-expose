@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 
@@ -1009,6 +1010,15 @@ def message(
     This command is useful for cron jobs and scheduled notifications.
     User must be paired with the channel (run 'llm-expose add pair' if needed).
     """
+    # When invoked as a plain function (tests/internal calls), Typer option
+    # defaults may still be OptionInfo objects instead of concrete values.
+    if isinstance(system_prompt_file, typer.models.OptionInfo):
+        system_prompt_file = None
+    if isinstance(file, typer.models.OptionInfo):
+        file = None
+    if isinstance(image, typer.models.OptionInfo):
+        image = []
+
     # Validate inputs
     channel = channel.strip()
     user_id = user_id.strip()
@@ -1149,6 +1159,7 @@ def message(
                 try:
                     mcp_config = load_mcp_config()
                     user_content = build_user_content(text, image_urls=image_data_urls)
+                    tool_sender = TelegramClient(client_cfg, handler=_placeholder_handler)
                     execution_context = ToolExecutionContext(
                         execution_mode="one-shot",
                         channel_id=user_id,
@@ -1156,6 +1167,7 @@ def message(
                         subject_id=user_id,
                         subject_kind="chat",
                         platform=client_cfg.client_type,
+                        sender=tool_sender,
                     )
                     async def _tool_aware_complete():
                         async with ToolAwareCompletion(
@@ -1237,7 +1249,13 @@ def message(
 
                 return send_result
 
-            result = asyncio.run(_send_all())
+            send_coro = _send_all()
+            try:
+                result = asyncio.run(send_coro)
+            finally:
+                # In tests, asyncio.run may be mocked and not await the coroutine.
+                if inspect.iscoroutine(send_coro) and send_coro.cr_frame is not None:
+                    send_coro.close()
         
         # Extend result with LLM metadata if applicable
         if llm_completion and llm_response_text:

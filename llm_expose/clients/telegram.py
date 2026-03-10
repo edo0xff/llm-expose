@@ -421,13 +421,13 @@ class TelegramClient(BaseClient):
 
     async def send_file(self, user_id: str, file_path: str) -> dict:
         """Send a local file to a specific Telegram chat as a document."""
-        if self._app is None:
-            self._app = Application.builder().token(self._config.bot_token).build()
-            await self._app.initialize()
-
         resolved_path = Path(file_path).expanduser()
         if not resolved_path.exists() or not resolved_path.is_file():
             raise FileNotFoundError(f"File not found: {file_path}")
+
+        if self._app is None:
+            self._app = Application.builder().token(self._config.bot_token).build()
+            await self._app.initialize()
 
         try:
             with resolved_path.open("rb") as handle:

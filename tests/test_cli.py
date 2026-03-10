@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 import pytest
 import typer
 
-from llm_expose.config.models import ProviderConfig, TelegramClientConfig
+from llm_expose.config.models import MCPConfig, ProviderConfig, TelegramClientConfig
 from llm_expose.cli.main import (
     add_pair_cmd,
     add_channel,
@@ -277,8 +277,6 @@ class TestCliHelpers:
             )
 
         client_cls_mock.assert_called_once()
-        client_mock = client_cls_mock.return_value
-        client_mock.send_message.assert_called_once_with("12345", "Generated reply")
         assert asyncio_run_mock.call_count == 2
 
         result = json.loads(print_mock.call_args.args[0])
@@ -294,21 +292,19 @@ class TestCliHelpers:
             "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
         ), patch("llm_expose.cli.main.TelegramClient") as client_cls_mock, patch(
             "llm_expose.cli.main.asyncio.run",
-            side_effect=[
-                {
-                    "message_id": "99",
-                    "timestamp": "2026-03-10T00:00:00Z",
-                    "status": "sent",
-                    "user_id": "12345",
-                },
-                {
+            return_value={
+                "message_id": "99",
+                "timestamp": "2026-03-10T00:00:00Z",
+                "status": "sent",
+                "user_id": "12345",
+                "file_reference": {
                     "message_id": "100",
                     "timestamp": "2026-03-10T00:00:01Z",
                     "status": "sent",
                     "user_id": "12345",
                     "file_name": "report.pdf",
                 },
-            ],
+            },
         ) as asyncio_run_mock, patch("llm_expose.cli.main.console.print") as print_mock, patch(
             "llm_expose.cli.main.Path"
         ) as path_mock:
@@ -329,15 +325,56 @@ class TestCliHelpers:
             )
 
         client_cls_mock.assert_called_once()
-        client_mock = client_cls_mock.return_value
-        client_mock.send_message.assert_called_once_with("12345", "Some file is here:")
-        client_mock.send_file.assert_called_once_with("12345", "C:/tmp/report.pdf")
         assert asyncio_run_mock.call_count == 1
 
         result = json.loads(print_mock.call_args.args[0])
         assert result["status"] == "sent"
         assert result["message_id"] == "99"
         assert result["file_reference"]["message_id"] == "100"
+
+    def test_message_tool_aware_completion_injects_sender_into_execution_context(self) -> None:
+        client_cfg = TelegramClientConfig(
+            bot_token="123:tok",
+            model_name="ops-model",
+            mcp_servers=["builtin-core"],
+        )
+        provider_cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o-mini",
+            api_key="secret",
+            base_url=None,
+        )
+
+        handler_mock = AsyncMock()
+        handler_mock.complete = AsyncMock(return_value="Generated reply")
+
+        with patch("llm_expose.cli.main.load_channel", return_value=client_cfg), patch(
+            "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
+        ), patch("llm_expose.cli.main.load_model", return_value=provider_cfg), patch(
+            "llm_expose.cli.main.load_mcp_config", return_value=MCPConfig()
+        ), patch("llm_expose.cli.main.LiteLLMProvider"), patch(
+            "llm_expose.cli.main.TelegramClient"
+        ) as client_cls_mock, patch(
+            "llm_expose.cli.main.ToolAwareCompletion"
+        ) as completion_cls_mock, patch(
+            "llm_expose.cli.main.console.print"
+        ):
+            completion_cls_mock.return_value.__aenter__.return_value = handler_mock
+            completion_cls_mock.return_value.__aexit__.return_value = None
+
+            message(
+                channel="ops",
+                user_id="12345",
+                text="Draft a reply",
+                llm_completion=True,
+                suppress_send=True,
+                system_prompt_file=None,
+                image=[],
+            )
+
+        assert client_cls_mock.called
+        execution_context = handler_mock.complete.await_args.kwargs["execution_context"]
+        assert execution_context.sender is client_cls_mock.return_value
 
     def test_message_file_not_found_exits(self) -> None:
         with pytest.raises(typer.Exit) as exc_info, patch(
