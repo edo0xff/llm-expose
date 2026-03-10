@@ -14,6 +14,7 @@ from typing import Any
 from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.config.loader import get_pairs_for_channel, load_mcp_config
 from llm_expose.config.models import ExposureConfig, MCPSettingsConfig
+from llm_expose.core.content_parts import extract_image_urls
 from llm_expose.core.mcp_runtime import MCPRuntimeManager
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.base import BaseProvider, Message, ToolChoice, ToolSpec
@@ -231,6 +232,8 @@ class Orchestrator:
             channel_id = channel_or_message
             text = user_message
 
+        response_images = extract_image_urls(message_content)[:1] if message_content is not None else []
+
         if not self._is_channel_paired(channel_id):
             return f"This instance is not paired. Run llm-expose add pair {channel_id}"
 
@@ -266,10 +269,33 @@ class Orchestrator:
         if not tools:
             reply = await self._provider.complete(history)
             history.append({"role": "assistant", "content": reply})
-            return reply
+            return self._with_image_references(reply, response_images)
 
         # Use mixed approval handler which respects per-server confirmation settings
-        return await self._handle_message_with_mixed_approval(history, tools, channel_id)
+        reply = await self._handle_message_with_mixed_approval(history, tools, channel_id)
+        return self._with_image_references(reply, response_images)
+
+    @staticmethod
+    def _with_image_references(
+        reply: str | MessageResponse,
+        image_urls: list[str],
+    ) -> str | MessageResponse:
+        """Attach image references to responses when available."""
+        if not image_urls:
+            return reply
+
+        if isinstance(reply, MessageResponse):
+            merged_images = list(reply.images or [])
+            merged_images.extend(image_urls)
+            return MessageResponse(
+                content=reply.content,
+                images=merged_images,
+                approval_id=reply.approval_id,
+                tool_names=reply.tool_names,
+                server_names=reply.server_names,
+            )
+
+        return MessageResponse(content=reply, images=list(image_urls))
 
     def _is_channel_paired(self, channel_id: str) -> bool:
         """Return whether an incoming channel ID is allowed for this exposure.

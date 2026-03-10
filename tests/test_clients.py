@@ -214,6 +214,31 @@ class TestTelegramClientHandlers:
         assert message_content[1]["type"] == "image_url"
         assert message_content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
+    @pytest.mark.asyncio
+    async def test_handle_message_sends_reference_image_from_structured_reply(self) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+        handler = AsyncMock(
+            return_value=MessageResponse(
+                content="LLM reply",
+                images=["https://example.com/reference.jpg"],
+            )
+        )
+        client = TelegramClient(cfg, handler=handler)
+
+        update = self._make_update("Analyze this")
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+        context.bot.send_photo = AsyncMock(return_value=MagicMock(message_id=99))
+
+        await client._handle_message(update, context)
+
+        update.message.reply_text.assert_called_once_with("LLM reply", parse_mode="Markdown")
+        context.bot.send_photo.assert_awaited_once_with(
+            chat_id="42",
+            photo="https://example.com/reference.jpg",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator
@@ -242,6 +267,23 @@ class TestOrchestrator:
         reply = await orch._handle_message("What is the answer?")
         provider.complete.assert_awaited_once()
         assert reply == "The answer is 42."
+
+    @pytest.mark.asyncio
+    async def test_handle_message_echoes_first_image_as_reference(self) -> None:
+        orch, _, _ = self._make_orchestrator()
+        reply = await orch._handle_message(
+            "42",
+            "Analyze image",
+            message_content=[
+                {"type": "text", "text": "Analyze image"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/one.jpg"}},
+                {"type": "image_url", "image_url": {"url": "https://example.com/two.jpg"}},
+            ],
+        )
+
+        assert isinstance(reply, MessageResponse)
+        assert reply.content == "The answer is 42."
+        assert reply.images == ["https://example.com/one.jpg"]
 
     @pytest.mark.asyncio
     async def test_handle_message_blocks_unpaired_channel(self) -> None:

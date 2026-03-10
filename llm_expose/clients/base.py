@@ -12,11 +12,13 @@ class MessageResponse:
     
     Attributes:
         content: The text message to display to the user.
+        images: Optional list of image URLs/data URLs to send as references.
         approval_id: Optional approval ID for tool execution confirmation.
         tool_names: Optional list of tool names requiring approval.
         server_names: Optional mapping of tool names to server names.
     """
     content: str
+    images: list[str] | None = None
     approval_id: str | None = None
     tool_names: list[str] | None = None
     server_names: dict[str, str] | None = None
@@ -83,6 +85,18 @@ class BaseClient(ABC):
         Raises:
             Exception: Platform-specific exceptions on send failures (network,
                 authentication, rate limits, invalid user_id).
+        """
+
+    @abstractmethod
+    async def send_images(self, user_id: str, image_urls: list[str]) -> dict:
+        """Send one or more images directly to a specific user.
+
+        Args:
+            user_id: The user/chat ID to send images to.
+            image_urls: Image references as remote URLs or data URLs.
+
+        Returns:
+            A dict with provider-specific send metadata.
         """
 
     def set_handler(self, handler: MessageHandler) -> None:

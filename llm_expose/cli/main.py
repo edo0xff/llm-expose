@@ -1164,6 +1164,10 @@ def message(
         
         # Run async send_message in event loop
         result = asyncio.run(client.send_message(user_id, final_message))
+
+        if llm_completion and image_data_urls:
+            image_result = asyncio.run(client.send_images(user_id, image_data_urls[:1]))
+            result["image_reference"] = image_result
         
         # Extend result with LLM metadata if applicable
         if llm_completion and llm_response_text:

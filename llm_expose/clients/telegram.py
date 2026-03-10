@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import mimetypes
+from datetime import datetime as dt, timezone
+from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -168,15 +171,52 @@ class TelegramClient(BaseClient):
                     reply.content,
                     reply_markup=reply_markup,
                 )
+                if reply.images:
+                    await self._send_images_with_bot(context.bot, chat_id, reply.images)
             else:
                 # No approval needed, just send the content
                 await self._reply_text_safe(
                     update.message,
                     reply.content,
                 )
+                if reply.images:
+                    await self._send_images_with_bot(context.bot, chat_id, reply.images)
         else:
             # Plain string response (backward compatibility)
             await self._reply_text_safe(update.message, reply)
+
+    @staticmethod
+    def _photo_payload_from_url(image_url: str) -> str | InputFile:
+        """Convert a URL/data URL into a Telegram send_photo payload."""
+        if not image_url.startswith("data:"):
+            return image_url
+
+        header, encoded = image_url.split(",", 1)
+        if ";base64" not in header:
+            raise ValueError("Unsupported non-base64 data URL")
+
+        media_type = "image/jpeg"
+        if header.startswith("data:"):
+            media_type = header[5:].split(";", 1)[0] or media_type
+
+        payload = base64.b64decode(encoded)
+        extension = mimetypes.guess_extension(media_type) or ".jpg"
+        return InputFile(payload, filename=f"reference{extension}")
+
+    async def _send_images_with_bot(self, bot: Any, chat_id: str, image_urls: list[str]) -> list[dict[str, str]]:
+        """Send images using a specific bot instance and collect metadata."""
+        sent: list[dict[str, str]] = []
+        for image_url in image_urls:
+            try:
+                payload = self._photo_payload_from_url(image_url)
+                message = await bot.send_photo(chat_id=chat_id, photo=payload)
+                sent.append({
+                    "message_id": str(message.message_id),
+                    "timestamp": dt.now(timezone.utc).isoformat(),
+                })
+            except Exception as exc:
+                logger.warning("Failed to send reference image: %s", exc)
+        return sent
 
     async def _extract_image_data_urls(
         self,
@@ -317,8 +357,6 @@ class TelegramClient(BaseClient):
             RuntimeError: If the Telegram app cannot be initialized.
             BadRequest: If send fails (invalid chat_id, permissions, etc.).
         """
-        from datetime import datetime as dt
-
         # Initialize the app if not already done
         if self._app is None:
             self._app = Application.builder().token(self._config.bot_token).build()
@@ -341,7 +379,7 @@ class TelegramClient(BaseClient):
             
             return {
                 "message_id": str(message.message_id),
-                "timestamp": dt.utcnow().isoformat() + "Z",
+                "timestamp": dt.now(timezone.utc).isoformat(),
                 "status": "sent",
                 "user_id": user_id,
             }
@@ -352,6 +390,20 @@ class TelegramClient(BaseClient):
                 exc,
             )
             raise
+
+    async def send_images(self, user_id: str, image_urls: list[str]) -> dict:
+        """Send one or more images to a specific Telegram chat."""
+        if self._app is None:
+            self._app = Application.builder().token(self._config.bot_token).build()
+            await self._app.initialize()
+
+        sent_items = await self._send_images_with_bot(self._app.bot, user_id, image_urls)
+        return {
+            "status": "sent",
+            "user_id": user_id,
+            "count": len(sent_items),
+            "items": sent_items,
+        }
 
     async def stop(self) -> None:
         """Stop polling and shut down the Telegram application."""

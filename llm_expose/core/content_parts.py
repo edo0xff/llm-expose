@@ -10,6 +10,24 @@ from typing import Any
 Message = dict[str, Any]
 
 
+def extract_image_urls(content: Any) -> list[str]:
+    """Extract image URLs from OpenAI-style multimodal content parts."""
+    if not isinstance(content, list):
+        return []
+
+    image_urls: list[str] = []
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "image_url":
+            continue
+        image_url = part.get("image_url")
+        if not isinstance(image_url, dict):
+            continue
+        url = image_url.get("url")
+        if isinstance(url, str) and url:
+            image_urls.append(url)
+    return image_urls
+
+
 def content_has_images(content: Any) -> bool:
     """Return True when content contains at least one image block."""
     if not isinstance(content, list):
