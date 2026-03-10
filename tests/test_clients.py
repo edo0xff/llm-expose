@@ -80,10 +80,10 @@ class TestTelegramClientHandlers:
         context = MagicMock()
 
         await client._handle_start(update, context)
-        update.message.reply_text.assert_called_once()
-        # Should contain a greeting
-        args = update.message.reply_text.call_args[0]
-        assert len(args) == 1 and isinstance(args[0], str)
+        assert update.message.reply_text.await_count >= 1
+        # First reply should contain a greeting
+        first_call = update.message.reply_text.await_args_list[0]
+        assert len(first_call.args) == 1 and isinstance(first_call.args[0], str)
 
     @pytest.mark.asyncio
     async def test_handle_message_calls_handler(self) -> None:
@@ -170,6 +170,49 @@ class TestTelegramClientHandlers:
         client = TelegramClient(cfg, handler=AsyncMock())
         # Should not raise
         await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_handle_message_forwards_photo_as_image_content(self) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+
+        class Orchestrator:
+            def __init__(self) -> None:
+                self.calls: list[tuple] = []
+
+            async def _handle_message(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return "ok"
+
+        orchestrator = Orchestrator()
+        client = TelegramClient(cfg, handler=orchestrator._handle_message)
+
+        update = MagicMock()
+        update.message.text = "Look"
+        update.message.caption = None
+        update.message.chat.id = 42
+        update.message.reply_text = AsyncMock()
+        update.effective_user = "user42"
+        photo = MagicMock()
+        photo.file_id = "photo123"
+        update.message.photo = [photo]
+
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+        telegram_file = MagicMock()
+        telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"jpg"))
+        context.bot.get_file = AsyncMock(return_value=telegram_file)
+
+        await client._handle_message(update, context)
+
+        assert len(orchestrator.calls) == 1
+        args, kwargs = orchestrator.calls[0]
+        assert args[0] == "42"
+        assert args[1] == "Look"
+        message_content = kwargs["message_content"]
+        assert isinstance(message_content, list)
+        assert message_content[0]["type"] == "text"
+        assert message_content[1]["type"] == "image_url"
+        assert message_content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import json
 import logging
 
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -43,6 +44,7 @@ from llm_expose.config import (
     save_model,
 )
 from llm_expose.config.models import ExposureConfig
+from llm_expose.core.content_parts import build_user_content, file_to_data_url
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.litellm_provider import LiteLLMProvider
@@ -257,20 +259,16 @@ def add_model() -> None:
             "Select online provider:",
             list(models_by_provider.keys()),
         )
-        if online_provider == "other":
-            online_provider = Prompt.ask("  Enter provider name (as recognised by LiteLLM visit: https://models.litellm.ai/ for best compatibility)")
-            model = Prompt.ask(f"  Model name for [cyan]{online_provider}[/cyan]")
-        else:
-            # Show available models for this provider
-            available_models = list(models_by_provider[online_provider])
-            selected_model = _select_from_list(
-                f"Select model for {online_provider}:",
-                available_models,
-            )
+        # Show available models for this provider
+        available_models = list(models_by_provider[online_provider])
+        selected_model = _select_from_list(
+            f"Select model for {online_provider}:",
+            available_models,
+        )
 
-            # Remove model supports info
-            selected_model = selected_model.split(model_supports)[0].strip()
-            model = selected_model
+        # Remove model supports info
+        selected_model = selected_model.split()[0].strip()
+        model = selected_model
 
         provider_name = online_provider.lower().strip()
         base_url: Optional[str] = None
@@ -959,6 +957,12 @@ def message(
         "--system-prompt-file",
         help="Path to custom system prompt file (overrides channel's system prompt)",
     ),
+    image: list[str] = typer.Option(
+        [],
+        "--image",
+        "-i",
+        help="Path to an image file to include in LLM input (repeatable).",
+    ),
 ) -> None:
     """Send a direct message to a specific user in a channel.
     
@@ -1026,6 +1030,15 @@ def message(
     final_message = text
     llm_response_text = None
     llm_model_used = None
+    image_data_urls: list[str] = []
+
+    if llm_completion and image:
+        for image_path_str in image:
+            image_path = Path(image_path_str).expanduser()
+            if not image_path.exists() or not image_path.is_file():
+                console.print(f"[red]Error: Image file not found: {image_path_str}[/red]")
+                raise typer.Exit(code=1)
+            image_data_urls.append(file_to_data_url(image_path))
 
     # If LLM completion is requested, generate response from instructions
     if llm_completion:
@@ -1091,6 +1104,7 @@ def message(
                 # Tool-aware completion with MCP
                 try:
                     mcp_config = load_mcp_config()
+                    user_content = build_user_content(text, image_urls=image_data_urls)
                     async def _tool_aware_complete():
                         async with ToolAwareCompletion(
                             provider=provider,
@@ -1101,7 +1115,7 @@ def message(
                             return await handler.complete(
                                 messages=[
                                     {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": text},
+                                    {"role": "user", "content": user_content},
                                 ]
                             )
                     llm_response_text = asyncio.run(_tool_aware_complete())
@@ -1111,11 +1125,12 @@ def message(
                     raise typer.Exit(code=1)
             else:
                 # Simple completion without tools
+                user_content = build_user_content(text, image_urls=image_data_urls)
                 llm_response_text = asyncio.run(
                     provider.complete(
                         messages=[
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text},
+                            {"role": "user", "content": user_content},
                         ]
                     )
                 )
@@ -1136,6 +1151,10 @@ def message(
         # Warn if system_prompt_file is provided without --llm-completion
         console.print(
             "[yellow]Warning: --system-prompt-file is ignored without --llm-completion.[/yellow]"
+        )
+    elif image:
+        console.print(
+            "[yellow]Warning: --image is ignored without --llm-completion.[/yellow]"
         )
 
     # Create client instance and send message

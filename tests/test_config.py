@@ -74,6 +74,14 @@ class TestProviderConfig:
         )
         assert cfg.base_url == "http://localhost:1234/v1"
 
+    def test_supports_vision_override(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o",
+            supports_vision=True,
+        )
+        assert cfg.supports_vision is True
+
 
 class TestTelegramClientConfig:
     def test_valid_config(self) -> None:

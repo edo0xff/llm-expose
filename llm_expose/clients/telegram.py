@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -18,6 +19,7 @@ from telegram.ext import (
 
 from llm_expose.clients.base import BaseClient, MessageHandler as LLMHandler, MessageResponse
 from llm_expose.config.models import TelegramClientConfig
+from llm_expose.core.content_parts import build_user_content
 
 logger = logging.getLogger(__name__)
 MARKDOWN_PARSE_MODE = "Markdown"
@@ -105,10 +107,14 @@ class TelegramClient(BaseClient):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Handle incoming text messages by delegating to the LLM handler."""
-        if not update.message or not update.message.text:
+        if not update.message:
             return
 
-        user_text = update.message.text
+        user_text = update.message.text or update.message.caption or ""
+        image_urls = await self._extract_image_data_urls(update, context)
+        if not user_text and not image_urls:
+            return
+
         chat_id = str(update.message.chat.id)
         logger.info(
             "Received message from user %s in chat %s",
@@ -128,7 +134,12 @@ class TelegramClient(BaseClient):
             # orchestrator handler is registered.
             bound_self = getattr(self._handler, "__self__", None)
             if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
-                reply = await self._handler(chat_id, user_text)
+                message_content = build_user_content(user_text, image_urls=image_urls)
+                reply = await self._handler(
+                    chat_id,
+                    user_text,
+                    message_content=message_content,
+                )
             else:
                 reply = await self._handler(user_text)
         except Exception as exc:
@@ -166,6 +177,34 @@ class TelegramClient(BaseClient):
         else:
             # Plain string response (backward compatibility)
             await self._reply_text_safe(update.message, reply)
+
+    async def _extract_image_data_urls(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> list[str]:
+        """Extract Telegram photo attachments as data URLs."""
+        if not update.message or not update.message.photo:
+            return []
+
+        image_urls: list[str] = []
+        # Telegram provides sizes from smallest to largest.
+        best_photo = update.message.photo[-1]
+        try:
+            telegram_file = await context.bot.get_file(best_photo.file_id)
+            payload: bytes | None = None
+
+            download_as_bytearray = getattr(telegram_file, "download_as_bytearray", None)
+            if callable(download_as_bytearray):
+                payload = bytes(await download_as_bytearray())
+
+            if payload:
+                encoded = base64.b64encode(payload).decode("ascii")
+                image_urls.append(f"data:image/jpeg;base64,{encoded}")
+        except Exception as exc:
+            logger.warning("Failed to extract photo attachment: %s", exc)
+
+        return image_urls
 
     async def _handle_callback_query(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -248,7 +287,7 @@ class TelegramClient(BaseClient):
 
         self._app.add_handler(CommandHandler("start", self._handle_start))
         self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
+            MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self._handle_message)
         )
         self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
 

@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 from llm_expose.config.models import MCPConfig, MCPServerConfig
+from llm_expose.core.content_parts import content_has_images, normalize_mcp_content
 from llm_expose.providers.base import ToolSpec
 
 logger = logging.getLogger(__name__)
@@ -270,8 +271,8 @@ class MCPRuntimeManager:
         except Exception:
             return {"value": str(value)}
 
-    async def execute_tool_call(self, openai_tool_call: Any) -> str:
-        """Execute a single OpenAI tool call and return plain text result."""
+    async def execute_tool_call(self, openai_tool_call: Any) -> str | list[dict[str, Any]]:
+        """Execute a single OpenAI tool call and return text or structured content."""
         logger.info("Received tool call: %s", openai_tool_call)
         tool_call_dict = self._to_dict(openai_tool_call)
 
@@ -296,9 +297,22 @@ class MCPRuntimeManager:
             result = await client.call_tool(tool_name, arguments)
 
             logger.info("Executed tool call '%s' with result: %s", tool_name, result)
+            normalized_content = self._result_to_openai_content(result)
+            if normalized_content and content_has_images(normalized_content):
+                return normalized_content
             return self._result_to_text(result)
         except Exception as exc:
             return f"MCP tool execution failed for '{tool_name}': {exc}"
+
+    @staticmethod
+    def _result_to_openai_content(result: Any) -> list[dict[str, Any]]:
+        """Convert MCP tool result to OpenAI-compatible content blocks."""
+        if isinstance(result, dict):
+            result_dict = result
+        else:
+            result_dict = MCPRuntimeManager._to_dict(result)
+        content = result_dict.get("content")
+        return normalize_mcp_content(content)
 
     @staticmethod
     def _result_to_text(result: Any) -> str:

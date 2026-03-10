@@ -22,6 +22,13 @@ class ProviderConfig(BaseModel):
         default=None,
         description="Base URL for local or self-hosted models (e.g. LM Studio, Ollama proxy)",
     )
+    supports_vision: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Override model vision capability detection. "
+            "When unset, provider attempts auto-detection."
+        ),
+    )
 
     @field_validator("provider_name", "model")
     @classmethod

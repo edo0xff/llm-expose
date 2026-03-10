@@ -40,6 +40,15 @@ class TestLiteLLMProviderInit:
         import os
         assert os.environ["OPENAI_API_KEY"] == "already-set"
 
+    def test_supports_vision_uses_config_override(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o",
+            supports_vision=True,
+        )
+        provider = LiteLLMProvider(cfg)
+        assert provider.supports_vision() is True
+
 
 class TestModelIdHandling:
     def test_local_model_id_strips_openai_prefix(self) -> None:
@@ -175,6 +184,45 @@ class TestComplete:
             called_kwargs = mock_client.chat.completions.create.await_args.kwargs
             assert called_kwargs["tools"] == tools
             assert called_kwargs["tool_choice"] == "required"
+
+    @pytest.mark.asyncio
+    async def test_complete_strips_images_when_model_has_no_vision(self) -> None:
+        cfg = ProviderConfig(
+            provider_name="openai",
+            model="gpt-4o-mini",
+            supports_vision=False,
+        )
+        provider = LiteLLMProvider(cfg)
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "text only"
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/jpeg;base64,AAAA",
+                            "detail": "auto",
+                        },
+                    },
+                ],
+            }
+        ]
+
+        with (
+            patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)) as mocked_completion,
+            patch("warnings.warn") as warn_mock,
+        ):
+            result = await provider.complete(messages)
+
+        assert result == "text only"
+        warn_mock.assert_called_once()
+        sent_messages = mocked_completion.await_args.kwargs["messages"]
+        assert sent_messages[0]["content"] == [{"type": "text", "text": "Describe"}]
 
 
 class TestStream:

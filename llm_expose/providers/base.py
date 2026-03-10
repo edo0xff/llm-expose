@@ -58,3 +58,7 @@ class BaseProvider(ABC):
         Yields:
             Individual text tokens/chunks from the model response.
         """
+
+    def supports_vision(self) -> bool:
+        """Return whether the configured model supports image input."""
+        return False

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import warnings
 from typing import Any, AsyncIterator
 
 import litellm
 from openai import AsyncOpenAI
 
 from llm_expose.config.models import ProviderConfig
+from llm_expose.core.content_parts import messages_have_images, strip_image_parts
 from llm_expose.providers.base import BaseProvider, Message, ToolChoice, ToolSpec
 
 
@@ -27,6 +29,7 @@ class LiteLLMProvider(BaseProvider):
     def __init__(self, config: ProviderConfig) -> None:
         self._config = config
         self._openai_client: AsyncOpenAI | None = None
+        self._supports_vision = self._detect_vision_support()
         if config.api_key:
             litellm.api_key = config.api_key
             # Preserve historical behavior expected by tests and local users.
@@ -42,6 +45,41 @@ class LiteLLMProvider(BaseProvider):
                 base_url=config.base_url or "http://localhost:1234/v1",
                 api_key=config.api_key or "local-not-required",
             )
+
+    def _detect_vision_support(self) -> bool:
+        """Determine vision capability from config override or LiteLLM metadata."""
+        if self._config.supports_vision is not None:
+            return bool(self._config.supports_vision)
+
+        try:
+            model_info = litellm.get_model_info(self._config.model.strip())
+            if isinstance(model_info, dict):
+                supports_vision = model_info.get("supports_vision")
+                if isinstance(supports_vision, bool):
+                    return supports_vision
+        except Exception:
+            # Conservative fallback when model metadata cannot be resolved.
+            pass
+
+        return False
+
+    def supports_vision(self) -> bool:
+        """Return whether the configured model supports image input."""
+        return self._supports_vision
+
+    def _prepare_messages(self, messages: list[Message]) -> list[Message]:
+        """Normalize message payload according to model capabilities."""
+        if self._supports_vision or not messages_have_images(messages):
+            return messages
+
+        normalized, stripped_count = strip_image_parts(messages)
+        if stripped_count:
+            warning_message = (
+                f"Model '{self._config.model}' does not support vision; "
+                f"skipping {stripped_count} image part(s)."
+            )
+            warnings.warn(warning_message)
+        return normalized
 
     def _is_local_provider(self) -> bool:
         """Return ``True`` when configuration targets a local model server."""
@@ -90,6 +128,7 @@ class LiteLLMProvider(BaseProvider):
         tool_choice: ToolChoice | None = None,
     ) -> Message:
         """Return the full assistant message payload for tool-call handling."""
+        messages = self._prepare_messages(messages)
         request_kwargs: dict[str, Any] = {}
         if tools is not None:
             request_kwargs["tools"] = tools
@@ -152,6 +191,7 @@ class LiteLLMProvider(BaseProvider):
         Yields:
             Text delta strings as they are received from the model.
         """
+        messages = self._prepare_messages(messages)
         request_kwargs: dict[str, Any] = {}
         if tools is not None:
             request_kwargs["tools"] = tools

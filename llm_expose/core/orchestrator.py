@@ -205,7 +205,11 @@ class Orchestrator:
         return self._histories[channel_id]
 
     async def _handle_message(
-        self, channel_or_message: str, user_message: str | None = None
+        self,
+        channel_or_message: str,
+        user_message: str | None = None,
+        *,
+        message_content: Any | None = None,
     ) -> str | MessageResponse:
         """Process a single user message and return the LLM's reply.
 
@@ -245,7 +249,12 @@ class Orchestrator:
                 )
 
         history = self._get_or_create_history(channel_id)
-        history.append({"role": "user", "content": text})
+        history.append(
+            {
+                "role": "user",
+                "content": message_content if message_content is not None else text,
+            }
+        )
         logger.debug(
             "Sending %d messages to provider for channel %s",
             len(history),
