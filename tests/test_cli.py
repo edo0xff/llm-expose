@@ -22,21 +22,6 @@ from llm_expose.cli.main import (
 )
 
 
-def _mock_asyncio_run_results(*results):
-    """Return a side effect that consumes and closes awaitables passed to asyncio.run."""
-    pending = list(results)
-
-    def _run(awaitable):
-        try:
-            return pending.pop(0)
-        finally:
-            close = getattr(awaitable, "close", None)
-            if callable(close):
-                close()
-
-    return _run
-
-
 class TestCliHelpers:
     def test_parse_multi_select_numbers(self) -> None:
         assert _parse_multi_select_numbers("1,2,3") == [1, 2, 3]
@@ -201,7 +186,6 @@ class TestCliHelpers:
                 suppress_send=True,
                 system_prompt_file=None,
                 image=[],
-                file=None,
             )
 
         assert exc_info.value.exit_code == 1
@@ -226,8 +210,9 @@ class TestCliHelpers:
         ), patch("llm_expose.cli.main.load_model", return_value=provider_cfg), patch(
             "llm_expose.cli.main.LiteLLMProvider"
         ) as provider_cls_mock, patch(
-            "llm_expose.cli.main.asyncio.run",
-            side_effect=_mock_asyncio_run_results("Generated reply"),
+            "llm_expose.cli.main.TelegramClient"
+        ) as client_cls_mock, patch(
+            "llm_expose.cli.main.asyncio.run", return_value="Generated reply"
         ) as asyncio_run_mock, patch(
             "llm_expose.cli.main.console.print"
         ) as print_mock:
@@ -239,10 +224,10 @@ class TestCliHelpers:
                 suppress_send=True,
                 system_prompt_file=None,
                 image=[],
-                file=None,
             )
 
         provider_cls_mock.assert_called_once_with(provider_cfg)
+        client_cls_mock.assert_not_called()
         assert asyncio_run_mock.call_count == 1
 
         result = json.loads(print_mock.call_args.args[0])
@@ -269,9 +254,9 @@ class TestCliHelpers:
             "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
         ), patch("llm_expose.cli.main.load_model", return_value=provider_cfg), patch(
             "llm_expose.cli.main.LiteLLMProvider"
-        ), patch(
+        ), patch("llm_expose.cli.main.TelegramClient") as client_cls_mock, patch(
             "llm_expose.cli.main.asyncio.run",
-            side_effect=_mock_asyncio_run_results(
+            side_effect=[
                 "Generated reply",
                 {
                     "message_id": "99",
@@ -279,7 +264,7 @@ class TestCliHelpers:
                     "status": "sent",
                     "user_id": "12345",
                 },
-            ),
+            ],
         ) as asyncio_run_mock, patch("llm_expose.cli.main.console.print") as print_mock:
             message(
                 channel="ops",
@@ -289,9 +274,11 @@ class TestCliHelpers:
                 suppress_send=False,
                 system_prompt_file=None,
                 image=[],
-                file=None,
             )
 
+        client_cls_mock.assert_called_once()
+        client_mock = client_cls_mock.return_value
+        client_mock.send_message.assert_called_once_with("12345", "Generated reply")
         assert asyncio_run_mock.call_count == 2
 
         result = json.loads(print_mock.call_args.args[0])
@@ -305,23 +292,23 @@ class TestCliHelpers:
 
         with patch("llm_expose.cli.main.load_channel", return_value=client_cfg), patch(
             "llm_expose.cli.main.get_pairs_for_channel", return_value=["12345"]
-        ), patch(
+        ), patch("llm_expose.cli.main.TelegramClient") as client_cls_mock, patch(
             "llm_expose.cli.main.asyncio.run",
-            side_effect=_mock_asyncio_run_results(
+            side_effect=[
                 {
                     "message_id": "99",
                     "timestamp": "2026-03-10T00:00:00Z",
                     "status": "sent",
                     "user_id": "12345",
-                    "file_reference": {
-                        "message_id": "100",
-                        "timestamp": "2026-03-10T00:00:01Z",
-                        "status": "sent",
-                        "user_id": "12345",
-                        "file_name": "report.pdf",
-                    },
                 },
-            ),
+                {
+                    "message_id": "100",
+                    "timestamp": "2026-03-10T00:00:01Z",
+                    "status": "sent",
+                    "user_id": "12345",
+                    "file_name": "report.pdf",
+                },
+            ],
         ) as asyncio_run_mock, patch("llm_expose.cli.main.console.print") as print_mock, patch(
             "llm_expose.cli.main.Path"
         ) as path_mock:
@@ -341,6 +328,10 @@ class TestCliHelpers:
                 file="C:/tmp/report.pdf",
             )
 
+        client_cls_mock.assert_called_once()
+        client_mock = client_cls_mock.return_value
+        client_mock.send_message.assert_called_once_with("12345", "Some file is here:")
+        client_mock.send_file.assert_called_once_with("12345", "C:/tmp/report.pdf")
         assert asyncio_run_mock.call_count == 1
 
         result = json.loads(print_mock.call_args.args[0])
