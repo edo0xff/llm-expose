@@ -305,7 +305,7 @@ class TestOrchestrator:
         assert reply == "The answer is 42."
 
     @pytest.mark.asyncio
-    async def test_handle_message_echoes_first_image_as_reference(self) -> None:
+    async def test_handle_message_does_not_echo_input_images_as_references(self) -> None:
         orch, _, _ = self._make_orchestrator()
         reply = await orch._handle_message(
             "42",
@@ -317,9 +317,7 @@ class TestOrchestrator:
             ],
         )
 
-        assert isinstance(reply, MessageResponse)
-        assert reply.content == "The answer is 42."
-        assert reply.images == ["https://example.com/one.jpg"]
+        assert reply == "The answer is 42."
 
     @pytest.mark.asyncio
     async def test_handle_message_blocks_unpaired_channel(self) -> None:
