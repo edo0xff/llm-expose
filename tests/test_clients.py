@@ -337,7 +337,7 @@ class TestOrchestrator:
             orch = Orchestrator(config=config, provider=provider, client=client)
             reply = await orch._handle_message("42", "Hello")
 
-        assert reply == "This instance is not paired. Run llm-expose add pair 42"
+        assert reply == "This instance is not paired. Run `llm-expose add pair 42`"
         provider.complete.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -361,7 +361,7 @@ class TestOrchestrator:
             orch = Orchestrator(config=config, provider=provider, client=client)
 
             blocked = await orch._handle_message("42", "Hello")
-            assert blocked == "This instance is not paired. Run llm-expose add pair 42"
+            assert blocked == "This instance is not paired. Run `llm-expose add pair 42`"
             provider.complete.assert_not_awaited()
 
             channel_pairs.append("42")
@@ -397,7 +397,7 @@ class TestOrchestrator:
             channel_pairs.clear()
 
             blocked = await orch._handle_message("42", "Hello after removal")
-            assert blocked == "This instance is not paired. Run llm-expose add pair 42"
+            assert blocked == "This instance is not paired. Run `llm-expose add pair 42`"
             assert provider.complete.await_count == 1
 
     @pytest.mark.asyncio

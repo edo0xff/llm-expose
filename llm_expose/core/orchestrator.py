@@ -236,7 +236,7 @@ class Orchestrator:
             text = user_message
 
         if not self._is_channel_paired(channel_id):
-            return f"This instance is not paired. Run llm-expose add pair {channel_id}"
+            return f"This instance is not paired. Run `llm-expose add pair {channel_id}`"
 
         approval_decision = self._parse_approval_decision(text)
         if approval_decision is not None:
