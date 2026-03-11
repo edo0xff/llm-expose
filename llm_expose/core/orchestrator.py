@@ -27,6 +27,35 @@ _DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful AI assistant. Answer the user's questions clearly and concisely."
 )
 
+_START_ONBOARDING_VISIBLE_TEXT = (
+    "👋 Hello! I'm a telegram bot powered by an LLM. Let's setup some configurations!\n"
+    "1) Let me know how should I call you? Please reply with your name or nickname.\n"
+    "2) Second, please tell me how I should behave? You can specify a system prompt to guide my responses. "
+    "For example, you can say 'You are a helpful assistant that provides concise answers.' "
+    "Or something simplier like 'Be friendly and use emojis!'\n"
+    "3) Finally, you can specify any additional instructions or preferences for our interactions. "
+    "For example, you can say 'Quiero que me respondas en español' or any other instructions!"
+)
+
+_START_ONBOARDING_CONTEXT_MARKER = "[start-onboarding:v1]"
+_START_ONBOARDING_CONTEXT_TEXT = (
+    "[start-onboarding:v1]\n"
+    "The user has triggered /start and is beginning setup. Collect and respect these preferences:\n"
+    "- Preferred name or nickname for how to address the user.\n"
+    "- Behavior/style instructions that should shape assistant responses.\n"
+    "- Additional interaction preferences (language, tone, formatting, etc.).\n"
+    "When these preferences are provided, apply them in future replies for this channel."
+)
+
+_RELOAD_STARTUP_CONTEXT_MARKER = "[reload-startup:v1]"
+_RELOAD_STARTUP_CONTEXT_TEXT = (
+    "[reload-startup:v1]\n"
+    "System and runtime context was reloaded for this channel. "
+    "On your next completion, proactively perform any required startup checks or setup actions "
+    "that are appropriate for this environment. Do not announce this internal startup workflow "
+    "to the user unless they explicitly ask about it."
+)
+
 
 @dataclass
 class _PendingApproval:
@@ -779,6 +808,166 @@ class Orchestrator:
         if isinstance(tool_call, dict):
             return str(tool_call.get("id") or "unknown_tool_call")
         return str(getattr(tool_call, "id", "unknown_tool_call"))
+
+    # ------------------------------------------------------------------
+    # Admin command interface (cross-client)
+    # ------------------------------------------------------------------
+
+    def _admin_status(self, channel_id: str) -> str:
+        """Return a formatted status summary for the given channel."""
+        channel_model = getattr(self._config.client, "model_name", None)
+        model = channel_model or self._config.provider.model
+        exposure = self._config.name
+
+        history = self._histories.get(channel_id, [])
+        msg_count = len([m for m in history if m.get("role") != "system"])
+        active_channels = len(self._histories)
+        pending_count = len(self._pending_approvals)
+
+        lines = [
+            f"*📊 Status: {exposure}*",
+            f"Model: `{model}`",
+            f"History: {msg_count} message(s) in this chat",
+            f"Active channels: {active_channels}",
+            f"Pending approvals: {pending_count}",
+        ]
+
+        if self._mcp_runtime is not None and self._mcp_runtime_initialized:
+            tools = self._mcp_runtime.tools
+            # Group tools by server
+            server_counts: dict[str, int] = {}
+            for tool in tools:
+                fn = tool.get("function", {})
+                name = fn.get("name", "")
+                server = self._mcp_runtime.get_tool_server_name(name) or "unknown"
+                server_counts[server] = server_counts.get(server, 0) + 1
+            summary = ", ".join(f"{s}: {n}" for s, n in server_counts.items())
+            lines.append(f"MCP tools: {len(tools)} ({summary})")
+        elif self._mcp_runtime is not None:
+            lines.append("MCP: configured but not yet initialized")
+        else:
+            lines.append("MCP: not configured")
+
+        return "\n".join(lines)
+
+    def _admin_clear_history(self, channel_id: str) -> str:
+        """Clear conversation history for the given channel."""
+        self._histories[channel_id] = []
+        return "✅ Conversation history cleared."
+
+    def _admin_tools(self) -> str:
+        """Return a formatted list of available MCP tools grouped by server."""
+        if self._mcp_runtime is None or not self._mcp_runtime_initialized:
+            return "No MCP tools available (runtime not initialized)."
+
+        tools = self._mcp_runtime.tools
+        if not tools:
+            return "No MCP tools available."
+
+        # Group by server
+        by_server: dict[str, list[str]] = {}
+        for tool in tools:
+            fn = tool.get("function", {})
+            name = fn.get("name", "unknown")
+            desc = fn.get("description", "")
+            server = self._mcp_runtime.get_tool_server_name(name) or "unknown"
+            mode = self._get_tool_confirmation_mode(name)
+            tag = "[approval]" if mode == "required" else "[auto]"
+            entry = f"  • `{name}` {tag}"
+            if desc:
+                first_line = desc.split("\n")[0][:80]
+                entry += f" — {first_line}"
+            by_server.setdefault(server, []).append(entry)
+
+        lines = ["*🔧 MCP Tools*"]
+        for server, entries in by_server.items():
+            lines.append(f"\n*{server}*")
+            lines.extend(entries)
+        return "\n".join(lines)
+
+    def _ensure_start_onboarding_context(self, channel_id: str) -> None:
+        """Inject onboarding context once per channel when /start is used."""
+        history = self._get_or_create_history(channel_id)
+        for message in history:
+            if message.get("role") != "system":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and _START_ONBOARDING_CONTEXT_MARKER in content:
+                return
+
+        history.append({"role": "system", "content": _START_ONBOARDING_CONTEXT_TEXT})
+
+    def _admin_start(self, channel_id: str) -> str:
+        """Return onboarding instructions and inject setup context for this channel."""
+        if not self._is_channel_paired(channel_id):
+            return f"This instance is not paired. Run `llm-expose add pair {channel_id}`"
+
+        self._ensure_start_onboarding_context(channel_id)
+        return _START_ONBOARDING_VISIBLE_TEXT
+
+    async def _admin_reload(self, channel_id: str) -> str:
+        """Clear history, reset system prompt cache, and reinitialize MCP."""
+        self._histories[channel_id] = []
+        self._loaded_system_prompt = None
+
+        if self._mcp_runtime is not None and self._mcp_runtime_initialized:
+            try:
+                await self._mcp_runtime.shutdown()
+            except Exception as exc:
+                logger.warning("Error shutting down MCP runtime during reload: %s", exc)
+            self._mcp_runtime_initialized = False
+
+        history = self._get_or_create_history(channel_id)
+        history.append({"role": "system", "content": _RELOAD_STARTUP_CONTEXT_TEXT})
+
+        return "✅ Reloaded: history cleared, system prompt reset, MCP will reinitialize on next message."
+
+    @staticmethod
+    def _admin_list() -> str:
+        """Return the list of available admin commands."""
+        return (
+            "Available admin commands:\n"
+            "/start — begin onboarding and setup guidance\n"
+            "/list — show available commands\n"
+            "/status — show runtime status\n"
+            "/clear — clear conversation history for this chat\n"
+            "/tools — list available MCP tools\n"
+            "/reload — clear history, reload system prompt and reinitialize MCP"
+        )
+
+    async def handle_admin_command(
+        self, channel_id: str, command: str, args: list[str] | None = None
+    ) -> str:
+        """Dispatch an admin command and return the formatted response.
+
+        This is the single cross-client entry point for admin commands. Any
+        client (Telegram, Discord, Slack, …) can call this method with the
+        bare command name and receive a ready-to-send string response.
+
+        Args:
+            channel_id: The channel that issued the command (for scoping).
+            command: Bare command name, e.g. ``"status"``, ``"clear"``.
+            args: Optional list of additional arguments (reserved for future use).
+
+        Returns:
+            A formatted string ready to be sent back to the user.
+        """
+        cmd = command.lower().strip()
+        if cmd == "start":
+            return self._admin_start(channel_id)
+        if cmd == "list":
+            return self._admin_list()
+        if cmd == "status":
+            return self._admin_status(channel_id)
+        if cmd == "clear":
+            return self._admin_clear_history(channel_id)
+        if cmd == "tools":
+            return self._admin_tools()
+        if cmd == "reload":
+            return await self._admin_reload(channel_id)
+        return (
+            "Unknown command. Use /list to see available admin commands."
+        )
 
     async def run(self) -> None:
         """Start the client and block until it stops.

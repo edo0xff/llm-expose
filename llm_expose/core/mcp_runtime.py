@@ -390,3 +390,11 @@ class MCPRuntimeManager:
             except Exception as exc:
                 logger.warning("Error disconnecting MCP client '%s': %s", server_name, exc)
         await self._stack.aclose()
+        # Ensure runtime can be cleanly re-initialized after shutdown/reload.
+        self._stack = AsyncExitStack()
+        self._initialized = False
+        self._tools = []
+        self._tool_to_client = {}
+        self._tool_to_server = {}
+        self._clients = {}
+        self._server_instructions = []

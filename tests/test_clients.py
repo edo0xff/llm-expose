@@ -72,19 +72,37 @@ class TestTelegramClientHandlers:
         return update
 
     @pytest.mark.asyncio
-    async def test_handle_start_sends_reply(self) -> None:
+    async def test_handle_command_routes_start_to_orchestrator(self) -> None:
         cfg = TelegramClientConfig(bot_token="123:tok")
-        client = TelegramClient(cfg, handler=AsyncMock())
+        class Orchestrator:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, list[str]]] = []
+
+            async def handle_admin_command(
+                self,
+                channel_id: str,
+                command: str,
+                args: list[str] | None = None,
+            ) -> str:
+                self.calls.append((channel_id, command, list(args or [])))
+                return "start onboarding"
+
+        orchestrator = Orchestrator()
+        client = TelegramClient(cfg, handler=orchestrator.handle_admin_command)
 
         update = MagicMock()
+        update.message.text = "/start"
+        update.message.chat.id = 42
         update.message.reply_text = AsyncMock()
         context = MagicMock()
+        context.args = []
 
-        await client._handle_start(update, context)
-        assert update.message.reply_text.await_count >= 1
-        # First reply should contain a greeting
-        first_call = update.message.reply_text.await_args_list[0]
-        assert len(first_call.args) == 1 and isinstance(first_call.args[0], str)
+        await client._handle_command(update, context)
+
+        assert orchestrator.calls == [("42", "start", [])]
+        update.message.reply_text.assert_called_once_with(
+            "start onboarding", parse_mode="Markdown"
+        )
 
     @pytest.mark.asyncio
     async def test_handle_message_calls_handler(self) -> None:
@@ -381,6 +399,75 @@ class TestOrchestrator:
 
         assert reply == "This instance is not paired. Run `llm-expose add pair 42`"
         provider.complete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_admin_start_blocks_unpaired_channel(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="telegram-main",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="The answer is 42.")
+        client = MagicMock()
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["100"]
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+            reply = await orch.handle_admin_command("42", "start", [])
+
+        assert reply == "This instance is not paired. Run `llm-expose add pair 42`"
+
+    @pytest.mark.asyncio
+    async def test_admin_start_injects_onboarding_context_once(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            channel_name="telegram-main",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok"),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="The answer is 42.")
+        client = MagicMock()
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
+            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+            first = await orch.handle_admin_command("42", "start", [])
+            second = await orch.handle_admin_command("42", "start", [])
+
+        assert "Hello! I'm a telegram bot powered by an LLM" in first
+        assert first == second
+
+        history = orch._get_or_create_history("42")
+        onboarding_system_messages = [
+            msg
+            for msg in history
+            if msg.get("role") == "system"
+            and isinstance(msg.get("content"), str)
+            and "[start-onboarding:v1]" in str(msg.get("content"))
+        ]
+        assert len(onboarding_system_messages) == 1
+
+    @pytest.mark.asyncio
+    async def test_admin_reload_injects_startup_context_instruction(self) -> None:
+        orch, _, _ = self._make_orchestrator()
+
+        reply = await orch.handle_admin_command("42", "reload", [])
+
+        assert "Reloaded" in reply
+        history = orch._get_or_create_history("42")
+        reload_system_messages = [
+            msg
+            for msg in history
+            if msg.get("role") == "system"
+            and isinstance(msg.get("content"), str)
+            and "[reload-startup:v1]" in str(msg.get("content"))
+        ]
+        assert len(reload_system_messages) == 1
 
     @pytest.mark.asyncio
     async def test_handle_message_recognizes_pair_added_without_restart(self) -> None:

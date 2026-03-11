@@ -15,7 +15,6 @@ from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
-    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -122,23 +121,39 @@ class TelegramClient(BaseClient):
                 **kwargs,
             )
 
-    async def _handle_start(
+    @property
+    def _orchestrator(self):
+        """Return the bound Orchestrator instance if one is registered as handler, else None."""
+        bound_self = getattr(self._handler, "__self__", None)
+        if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
+            return bound_self
+        return None
+
+    async def _handle_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle the /start command."""
-        if update.message:
-            await update.message.reply_text(
-                "👋 Hello! I'm a telegram bot powered by an LLM. Let's setup some configurations!"
-            )
-            await update.message.reply_text(
-                "1) Let me know how should I call you? Please reply with your name or nickname."
-            )
-            await update.message.reply_text(
-                "2) Second, please tell me how I should behave? You can specify a system prompt to guide my responses. For example, you can say 'You are a helpful assistant that provides concise answers.' Or something simplier like 'Be friendly and use emojis!'"
-            )
-            await update.message.reply_text(
-                "3) Finally, you can specify any additional instructions or preferences for our interactions. For example, you can say 'Quiero que me respondas en español' or any other instructions!"
-            )
+        """Catch-all handler for slash-commands delegated to orchestrator.
+
+        Extracts the bare command name from the incoming message and delegates
+        to ``Orchestrator.handle_admin_command()``.  Any client that integrates
+        admin commands only needs to hook into that single orchestrator method.
+        """
+        if not update.message:
+            return
+
+        raw = (update.message.text or "").strip()
+        # Handle both /cmd and /cmd@botname forms
+        command = raw.lstrip("/").split("@")[0].split()[0].lower() if raw.startswith("/") else ""
+        args = list(context.args or [])
+        chat_id = str(update.message.chat.id)
+
+        orch = self._orchestrator
+        if orch is not None:
+            response = await orch.handle_admin_command(chat_id, command, args)
+        else:
+            response = "Admin commands are only available in orchestrator mode."
+
+        await self._reply_text_safe(update.message, response)
 
     async def _handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -407,7 +422,8 @@ class TelegramClient(BaseClient):
             .build()
         )
 
-        self._app.add_handler(CommandHandler("start", self._handle_start))
+        # Catch-all for slash commands (/start, /status, /clear, /tools, /reload, …).
+        self._app.add_handler(MessageHandler(filters.COMMAND, self._handle_command))
         self._app.add_handler(
             MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self._handle_message)
         )

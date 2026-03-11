@@ -780,3 +780,25 @@ class TestBuiltinMCPRuntime:
         assert "channel_name" in payload["error"]
 
         await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_resets_internal_state_for_reinitialize(self) -> None:
+        runtime = MCPRuntimeManager(MCPConfig(servers=[]))
+        fake_client = AsyncMock()
+
+        runtime._initialized = True
+        runtime._clients = {"server-a": fake_client}
+        runtime._tools = [{"type": "function", "function": {"name": "get_files"}}]
+        runtime._tool_to_client = {"get_files": fake_client}
+        runtime._tool_to_server = {"get_files": "server-a"}
+        runtime._server_instructions = ["[server-a] Use get_files for listing"]
+
+        await runtime.shutdown()
+
+        fake_client.close.assert_awaited_once()
+        assert runtime._initialized is False
+        assert runtime._clients == {}
+        assert runtime._tools == []
+        assert runtime._tool_to_client == {}
+        assert runtime._tool_to_server == {}
+        assert runtime._server_instructions == []
