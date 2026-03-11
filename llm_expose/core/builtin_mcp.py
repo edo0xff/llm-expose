@@ -82,7 +82,7 @@ class _GetInvocationContextTool(_BuiltinTool):
             name="llm_expose_get_invocation_context",
             description=(
                 "Return llm-expose invocation context for the current conversation, "
-                "including channel identifiers, execution mode, and UTC timestamp."
+                "including channel and user ids (mandatory for file sending), execution mode, and UTC timestamp."
             ),
             input_schema={
                 "type": "object",
@@ -175,7 +175,8 @@ class _GetInvocationAttachmentsTool(_BuiltinTool):
             description=(
                 "Return attachment descriptors for the current invocation, "
                 "including media type and source metadata. "
-                "Useful for sending files NOT for inferencing or completion."
+                "Useful when user ask for task related to attached files or images. "
+                "Maybe user do not mention 'attachments' explicitly but you could check this tool to discover if there are any attachments and their metadata."
             ),
             input_schema={
                 "type": "object",
@@ -246,6 +247,13 @@ class _SendTextMessageTool(_BuiltinTool):
         if not channel_id or not user_id or not text:
             return _error_result("channel_id, user_id, and text are required")
 
+        pairing_error = _validate_pairing_ids(
+            execution_context,
+            user_id=user_id,
+        )
+        if pairing_error is not None:
+            return _error_result(pairing_error)
+
         send_result = await sender.send_message(user_id, text)
         return _success_result(
             self.name,
@@ -304,6 +312,13 @@ class _SendFileMessageTool(_BuiltinTool):
         attachment_ref = _required_string(arguments, "attachment_ref")
         if not channel_id or not user_id:
             return _error_result("channel_id and user_id are required")
+
+        pairing_error = _validate_pairing_ids(
+            execution_context,
+            user_id=user_id,
+        )
+        if pairing_error is not None:
+            return _error_result(pairing_error)
 
         file_path = _resolve_local_path(
             execution_context,
@@ -379,6 +394,13 @@ class _SendImageMessageTool(_BuiltinTool):
         if not channel_id or not user_id:
             return _error_result("channel_id and user_id are required")
 
+        pairing_error = _validate_pairing_ids(
+            execution_context,
+            user_id=user_id,
+        )
+        if pairing_error is not None:
+            return _error_result(pairing_error)
+
         image_path = _resolve_local_path(
             execution_context,
             provided_path=image_path_value,
@@ -409,6 +431,32 @@ def _required_string(arguments: dict[str, Any], key: str) -> str:
     if isinstance(value, str):
         return value.strip()
     return ""
+
+
+def _validate_pairing_ids(
+    execution_context: ToolExecutionContext | None,
+    *,
+    user_id: str,
+) -> str | None:
+    if execution_context is None:
+        return "execution context unavailable in this execution mode"
+
+    channel_name = execution_context.channel_name
+    if not channel_name:
+        return "channel_name is not available in the current execution context"
+
+    try:
+        pairing_ids = set(get_pairs_for_channel(channel_name))
+    except Exception as exc:
+        return f"failed to load pairing IDs: {exc}"
+
+    if user_id not in pairing_ids:
+        return (
+            f"user_id '{user_id}' is not paired for channel '{channel_name}'; "
+            "call llm_expose_get_pairing_ids to inspect allowed IDs"
+        )
+
+    return None
 
 
 def _resolve_local_path(

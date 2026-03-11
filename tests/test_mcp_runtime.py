@@ -167,7 +167,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_text_message_tool_executes_with_sender(self) -> None:
+    async def test_builtin_send_text_message_tool_executes_with_sender(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -182,6 +188,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
+            channel_name="my-bot",
             sender=sender,
         )
 
@@ -206,7 +213,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_file_message_tool_executes_with_sender(self, tmp_path) -> None:
+    async def test_builtin_send_file_message_tool_executes_with_sender(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -224,6 +237,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
+            channel_name="my-bot",
             sender=sender,
         )
 
@@ -249,7 +263,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_image_message_tool_executes_with_sender(self, tmp_path) -> None:
+    async def test_builtin_send_image_message_tool_executes_with_sender(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -267,6 +287,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
+            channel_name="my-bot",
             sender=sender,
         )
 
@@ -295,7 +316,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_image_message_tool_resolves_attachment_ref(self, tmp_path) -> None:
+    async def test_builtin_send_image_message_tool_resolves_attachment_ref(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -313,6 +340,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="one-shot",
             channel_id="42",
+            channel_name="my-bot",
             attachment_paths_by_ref={"att_1": str(image_file.resolve())},
             sender=sender,
         )
@@ -372,7 +400,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_file_message_returns_error_for_missing_file(self) -> None:
+    async def test_builtin_send_file_message_returns_error_for_missing_file(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -386,6 +420,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
+            channel_name="my-bot",
             sender=sender,
         )
 
@@ -409,7 +444,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_file_message_tool_resolves_attachment_ref(self, tmp_path) -> None:
+    async def test_builtin_send_file_message_tool_resolves_attachment_ref(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -427,6 +468,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="one-shot",
             channel_id="42",
+            channel_name="my-bot",
             attachment_paths_by_ref={"att_1": str(test_file.resolve())},
             sender=sender,
         )
@@ -451,7 +493,13 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_image_message_requires_path_or_ref(self) -> None:
+    async def test_builtin_send_image_message_requires_path_or_ref(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
@@ -466,6 +514,7 @@ class TestBuiltinMCPRuntime:
         execution_context = ToolExecutionContext(
             execution_mode="one-shot",
             channel_id="42",
+            channel_name="my-bot",
             sender=sender,
         )
 
@@ -599,5 +648,135 @@ class TestBuiltinMCPRuntime:
         sender.send_message.assert_not_called()
         assert payload["status"] == "error"
         assert "user_id" in payload["error"]
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_send_text_message_allows_when_user_id_is_paired(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '9001'\n",
+            encoding="utf-8",
+        )
+
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        sender = AsyncMock()
+        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        execution_context = ToolExecutionContext(
+            execution_mode="chat",
+            channel_id="42",
+            channel_name="my-bot",
+            sender=sender,
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_send_text_user_paired",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_send_text_message",
+                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        sender.send_message.assert_awaited_once_with("9001", "hello")
+        assert payload["status"] == "ok"
+        assert payload["user_id"] == "9001"
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_send_text_message_errors_when_user_id_not_paired(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "pairs.yaml").write_text(
+            "pairs_by_channel:\n  my-bot:\n    - '42'\n",
+            encoding="utf-8",
+        )
+
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        sender = AsyncMock()
+        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        execution_context = ToolExecutionContext(
+            execution_mode="chat",
+            channel_id="42",
+            channel_name="my-bot",
+            sender=sender,
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_send_text_unpaired_user",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_send_text_message",
+                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        sender.send_message.assert_not_called()
+        assert payload["status"] == "error"
+        assert "user_id" in payload["error"]
+        assert "not paired" in payload["error"]
+
+        await runtime.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_builtin_send_text_message_errors_when_channel_name_missing(self) -> None:
+        runtime = MCPRuntimeManager(
+            MCPConfig(
+                servers=[
+                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                ]
+            )
+        )
+        await runtime.initialize()
+
+        sender = AsyncMock()
+        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        execution_context = ToolExecutionContext(
+            execution_mode="chat",
+            channel_id="42",
+            channel_name=None,
+            sender=sender,
+        )
+
+        result = await runtime.execute_tool_call(
+            {
+                "id": "call_send_text_missing_channel_name",
+                "type": "function",
+                "function": {
+                    "name": "llm_expose_send_text_message",
+                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                },
+            },
+            execution_context=execution_context,
+        )
+
+        payload = json.loads(result)
+        sender.send_message.assert_not_called()
+        assert payload["status"] == "error"
+        assert "channel_name" in payload["error"]
 
         await runtime.shutdown()
