@@ -126,15 +126,15 @@ class TestCliHelpers:
 
         add_pair_mock.assert_called_once_with("telegram-main", "84")
 
-    def test_add_mcp_cmd_saves_builtin_server(self) -> None:
+    def test_add_mcp_cmd_saves_stdio_server(self) -> None:
         with patch("llm_expose.cli.main._print_banner"), patch(
             "llm_expose.cli.main.list_mcp_servers", return_value=[]
         ), patch(
             "llm_expose.cli.main._select_from_list",
-            side_effect=["builtin", "default"],
+            side_effect=["stdio", "default"],
         ), patch(
             "llm_expose.cli.main.Prompt.ask",
-            side_effect=["builtin-core"],
+            side_effect=["stdio-core", "uvx", "mcp-server --flag"],
         ), patch(
             "llm_expose.cli.main.Confirm.ask", return_value=True
         ), patch(
@@ -143,10 +143,34 @@ class TestCliHelpers:
             add_mcp_cmd()
 
         saved_cfg = save_mcp_server_mock.call_args.args[0]
-        assert saved_cfg.name == "builtin-core"
-        assert saved_cfg.transport == "builtin"
-        assert saved_cfg.command is None
+        assert saved_cfg.name == "stdio-core"
+        assert saved_cfg.transport == "stdio"
+        assert saved_cfg.command == "uvx"
+        assert saved_cfg.args == ["mcp-server", "--flag"]
         assert saved_cfg.url is None
+
+    def test_add_mcp_cmd_saves_sse_server(self) -> None:
+        with patch("llm_expose.cli.main._print_banner"), patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch(
+            "llm_expose.cli.main._select_from_list",
+            side_effect=["sse", "required"],
+        ), patch(
+            "llm_expose.cli.main.Prompt.ask",
+            side_effect=["sse-core", "http://localhost:3000/sse"],
+        ), patch(
+            "llm_expose.cli.main.Confirm.ask", return_value=True
+        ), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mcp_server_mock:
+            add_mcp_cmd()
+
+        saved_cfg = save_mcp_server_mock.call_args.args[0]
+        assert saved_cfg.name == "sse-core"
+        assert saved_cfg.transport == "sse"
+        assert saved_cfg.command is None
+        assert saved_cfg.args == []
+        assert saved_cfg.url == "http://localhost:3000/sse"
 
     def test_list_pairs_cmd_shows_configured_pairs(self) -> None:
         with patch("llm_expose.cli.main.list_pairs", return_value={"telegram-main": ["42"]}), patch(

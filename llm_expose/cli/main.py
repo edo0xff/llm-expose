@@ -729,16 +729,12 @@ def add_mcp_cmd() -> None:
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit()
 
-    transport = _select_from_list("Select MCP transport:", ["builtin", "stdio", "sse"])
+    transport = _select_from_list("Select MCP transport:", ["stdio", "sse"])
     command: Optional[str] = None
     args: list[str] = []
     url: Optional[str] = None
 
-    if transport == "builtin":
-        console.print(
-            "\n[yellow]Builtin MCP servers run in-process llm-expose tools. Some builtin tools may trigger external actions such as sending messages.[/yellow]"
-        )
-    elif transport == "stdio":
+    if transport == "stdio":
         command = Prompt.ask("  Command to run (example: npx, uvx)").strip()
         if not command:
             console.print("[red]Command cannot be empty for stdio transport.[/red]")
