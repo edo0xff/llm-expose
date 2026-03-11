@@ -111,6 +111,31 @@ class BaseClient(ABC):
             A dict with provider-specific send metadata.
         """
 
+    async def notify_tool_status(
+        self,
+        user_id: str,
+        status: str,
+        tool_name: str,
+        *,
+        approval_id: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Publish tool lifecycle status feedback to end users.
+
+        Clients may choose how to present updates (new messages, message edits,
+        inline UI updates, etc.). The default implementation is a no-op to keep
+        backward compatibility for clients that do not support interim feedback.
+
+        Args:
+            user_id: Platform-specific chat/user identifier.
+            status: Lifecycle state (for example: "running", "failed").
+            tool_name: Name of the tool being executed.
+            approval_id: Optional approval identifier when this status relates
+                to an approval workflow.
+            detail: Optional human-readable extra detail for the status.
+        """
+        return None
+
     def set_handler(self, handler: MessageHandler) -> None:
         """Replace the current message handler with *handler*.
 

@@ -46,20 +46,21 @@ class TelegramClient(BaseClient):
         self._config = config
         self._app: Application | None = None
         self._stop_event: asyncio.Event | None = None
+        self._approval_messages: dict[str, tuple[str, str]] = {}
 
     # ------------------------------------------------------------------
     # Telegram update handlers
     # ------------------------------------------------------------------
 
-    async def _reply_text_safe(self, message, text: str, **kwargs) -> None:
+    async def _reply_text_safe(self, message, text: str, **kwargs):
         """Send a reply using Markdown; retry as plain text on parse errors."""
         try:
-            await message.reply_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
+            return await message.reply_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
         except BadRequest as exc:
             if "Can't parse entities" not in str(exc):
                 raise
             logger.warning("Markdown parse failed in reply_text, retrying plain text: %s", exc)
-            await message.reply_text(text, **kwargs)
+            return await message.reply_text(text, **kwargs)
 
     async def _edit_message_text_safe(self, query, text: str, **kwargs) -> None:
         """Edit a message using Markdown; retry as plain text on parse errors."""
@@ -88,6 +89,38 @@ class TelegramClient(BaseClient):
                 raise
             logger.warning("Markdown parse failed in send_message, retrying plain text: %s", exc)
             await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+
+    async def _edit_chat_message_text_safe(
+        self,
+        bot,
+        chat_id: str,
+        message_id: str,
+        text: str,
+        **kwargs,
+    ) -> None:
+        """Edit a chat message by ID using Markdown with plain-text fallback."""
+        message_id_int = int(message_id)
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id_int,
+                text=text,
+                parse_mode=MARKDOWN_PARSE_MODE,
+                **kwargs,
+            )
+        except BadRequest as exc:
+            if "Can't parse entities" not in str(exc):
+                raise
+            logger.warning(
+                "Markdown parse failed in edit_message_text by id, retrying plain text: %s",
+                exc,
+            )
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id_int,
+                text=text,
+                **kwargs,
+            )
 
     async def _handle_start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -172,11 +205,16 @@ class TelegramClient(BaseClient):
                     ]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await self._reply_text_safe(
+                approval_message = await self._reply_text_safe(
                     update.message,
                     reply.content,
                     reply_markup=reply_markup,
                 )
+                if approval_message is not None and getattr(approval_message, "message_id", None) is not None:
+                    self._approval_messages[reply.approval_id] = (
+                        chat_id,
+                        str(approval_message.message_id),
+                    )
                 if reply.images:
                     await self._send_images_with_bot(context.bot, chat_id, reply.images)
             else:
@@ -310,21 +348,51 @@ class TelegramClient(BaseClient):
         # Extract content if reply is MessageResponse
         reply_text = reply.content if isinstance(reply, MessageResponse) else reply
 
-        # Edit the original message to show the decision and result
-        decision_emoji = "✅" if decision == "approve" else "❌"
-        decision_text = "approved" if decision == "approve" else "rejected"
-        status_message = f"{decision_emoji} Tool execution: {decision_text}\n\n{reply_text}"
-        
-        if query.message:
+        self._approval_messages.pop(approval_id, None)
+
+        # Keep final responses as normal messages after approval handling.
+        if chat_id and reply_text:
+            await self._send_message_safe(context.bot, chat_id, str(reply_text))
+
+    async def notify_tool_status(
+        self,
+        user_id: str,
+        status: str,
+        tool_name: str,
+        *,
+        approval_id: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Publish interim tool lifecycle feedback to Telegram users."""
+        if status == "running":
+            text = f"🔨 Running: `{tool_name}`"
+        elif status == "failed":
+            text = f"❌ Failed: `{tool_name}`"
+            if detail:
+                text += f"\n{detail}"
+        else:
+            return
+
+        bot = self._app.bot if self._app is not None else None
+
+        if status == "running" and approval_id and approval_id in self._approval_messages and bot is not None:
+            approval_chat_id, approval_message_id = self._approval_messages[approval_id]
             try:
-                await self._edit_message_text_safe(
-                    query,
-                    status_message,
+                await self._edit_chat_message_text_safe(
+                    bot,
+                    approval_chat_id,
+                    approval_message_id,
+                    text,
                 )
+                return
             except Exception as exc:
-                # If editing fails (e.g., message too old), send a new message
-                logger.warning("Could not edit message: %s", exc)
-                await self._send_message_safe(context.bot, chat_id, status_message)
+                logger.warning("Could not edit approval message for running status: %s", exc)
+
+        if bot is not None:
+            await self._send_message_safe(bot, user_id, text)
+            return
+
+        await self.send_message(user_id, text)
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -275,6 +275,48 @@ class TestTelegramClientHandlers:
         with pytest.raises(FileNotFoundError):
             await client.send_file("42", str(missing_path))
 
+    @pytest.mark.asyncio
+    async def test_notify_tool_status_running_edits_approval_message(self) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+        client = TelegramClient(cfg, handler=AsyncMock())
+
+        client._approval_messages["abc123"] = ("42", "99")
+        client._app = MagicMock()
+        client._app.bot = MagicMock()
+        client._app.bot.edit_message_text = AsyncMock()
+        client._app.bot.send_message = AsyncMock()
+
+        await client.notify_tool_status(
+            "42",
+            "running",
+            "mcp_server__search_docs",
+            approval_id="abc123",
+        )
+
+        client._app.bot.edit_message_text.assert_awaited_once()
+        client._app.bot.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_status_failed_sends_message(self) -> None:
+        cfg = TelegramClientConfig(bot_token="123:tok")
+        client = TelegramClient(cfg, handler=AsyncMock())
+
+        client._app = MagicMock()
+        client._app.bot = MagicMock()
+        client._app.bot.send_message = AsyncMock()
+
+        await client.notify_tool_status(
+            "42",
+            "failed",
+            "mcp_server__search_docs",
+            detail="MCP tool execution failed for 'mcp_server__search_docs': boom",
+        )
+
+        client._app.bot.send_message.assert_awaited_once()
+        sent_text = client._app.bot.send_message.await_args.kwargs["text"]
+        assert "Failed" in sent_text
+        assert "boom" in sent_text
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator
@@ -647,6 +689,88 @@ class TestOrchestrator:
         assert execution_context.initiator_user_id == "42"
         assert execution_context.platform == "telegram"
         assert execution_context.sender is client
+
+    @pytest.mark.asyncio
+    async def test_handle_message_emits_running_and_failed_tool_status(self) -> None:
+        config = ExposureConfig(
+            name="test",
+            provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
+            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
+        )
+        provider = MagicMock()
+        provider.complete = AsyncMock(return_value="fallback")
+        provider.complete_with_message = AsyncMock(
+            side_effect=[
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_status",
+                            "type": "function",
+                            "function": {
+                                "name": "mcp_server__search_docs",
+                                "arguments": '{"query":"status"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "done"},
+            ]
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.notify_tool_status = AsyncMock()
+
+        mcp_config = MCPConfig(
+            settings=MCPSettingsConfig(confirmation_mode="optional"),
+            servers=[
+                MCPServerConfig(
+                    name="remote-mcp",
+                    transport="sse",
+                    url="https://mcp.example.com/sse",
+                    allowed_tools=["mcp_server__search_docs"],
+                    enabled=True,
+                )
+            ],
+        )
+        fake_runtime = MagicMock()
+        fake_runtime.initialize = AsyncMock()
+        fake_runtime.shutdown = AsyncMock()
+        fake_runtime.execute_tool_call = AsyncMock(
+            return_value="MCP tool execution failed for 'mcp_server__search_docs': boom"
+        )
+        fake_runtime.tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "mcp_server__search_docs",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
+            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        ):
+            orch = Orchestrator(config=config, provider=provider, client=client)
+
+        reply = await orch._handle_message("42", "Use MCP")
+        assert reply == "done"
+
+        assert client.notify_tool_status.await_count == 2
+        first_call = client.notify_tool_status.await_args_list[0]
+        second_call = client.notify_tool_status.await_args_list[1]
+
+        assert first_call.args[0] == "42"
+        assert first_call.args[1] == "running"
+        assert first_call.args[2] == "mcp_server__search_docs"
+
+        assert second_call.args[0] == "42"
+        assert second_call.args[1] == "failed"
+        assert second_call.args[2] == "mcp_server__search_docs"
 
     @pytest.mark.asyncio
     async def test_handle_message_skips_disabled_or_invalid_mcp_servers(self) -> None:

@@ -439,14 +439,14 @@ class Orchestrator:
             
             # Add server name if available
             if server_names and tool_name in server_names:
-                tool_info.append(f"{tool_name} ({server_names[tool_name]})")
+                tool_info.append(f"{server_names[tool_name]}.{tool_name}")
             else:
                 tool_info.append(tool_name)
 
         names = ", ".join(tool_info)
         content = (
-            f"Tool execution requires confirmation (id: {approval_id}).\n"
-            f"Requested tool(s): {names}\n"
+            f"Tool execution requires confirmation (id: `{approval_id}`).\n"
+            f"Requested tool(s): `{names}`\n"
             f"Reply `approve {approval_id}` to continue or `reject {approval_id}` to cancel."
         )
         return MessageResponse(
@@ -469,7 +469,7 @@ class Orchestrator:
         executes auto-execute tools immediately, and creates pending approvals for
         tools that require confirmation.
         """
-        max_tool_rounds = 8
+        max_tool_rounds = 25
 
         for _ in range(max_tool_rounds):
             assistant_message = await self._provider_complete_message(
@@ -577,6 +577,7 @@ class Orchestrator:
                 history,
                 pending.tool_calls,
                 execution_context=pending.execution_context,
+                approval_id=approval_id,
             )
             return await self._handle_message_with_mcp_tools(
                 history,
@@ -602,11 +603,24 @@ class Orchestrator:
         tool_calls: list[Any],
         *,
         execution_context: ToolExecutionContext | None = None,
+        approval_id: str | None = None,
     ) -> None:
         if self._mcp_runtime is None:
             return
         for call in tool_calls:
             call_id = self._tool_call_id(call)
+            tool_name = self._tool_call_name(call)
+            target_id = self._feedback_target_id(execution_context)
+            if tool_name and target_id:
+                await self._notify_tool_status(
+                    target_id,
+                    "running",
+                    tool_name,
+                    approval_id=approval_id,
+                )
+
+            failed = False
+            failure_detail: str | None = None
             try:
                 tool_result = await asyncio.wait_for(
                     self._mcp_runtime.execute_tool_call(
@@ -620,8 +634,30 @@ class Orchestrator:
                     "MCP tool execution timed out after "
                     f"{self._mcp_settings.tool_timeout_seconds} seconds."
                 )
+                failed = True
+                failure_detail = tool_result
             except Exception as exc:
                 tool_result = f"MCP tool execution failed: {exc}"
+                failed = True
+                failure_detail = tool_result
+
+            if (
+                not failed
+                and isinstance(tool_result, str)
+                and tool_result.startswith("MCP tool execution failed")
+            ):
+                failed = True
+                failure_detail = tool_result
+
+            if failed and tool_name and target_id:
+                await self._notify_tool_status(
+                    target_id,
+                    "failed",
+                    tool_name,
+                    approval_id=approval_id,
+                    detail=failure_detail,
+                )
+
             history.append(
                 {
                     "role": "tool",
@@ -629,6 +665,54 @@ class Orchestrator:
                     "content": tool_result,
                 }
             )
+
+    async def _notify_tool_status(
+        self,
+        user_id: str,
+        status: str,
+        tool_name: str,
+        *,
+        approval_id: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        try:
+            await self._client.notify_tool_status(
+                user_id,
+                status,
+                tool_name,
+                approval_id=approval_id,
+                detail=detail,
+            )
+        except Exception as exc:
+            logger.debug("Failed to publish tool status '%s' for '%s': %s", status, tool_name, exc)
+
+    @staticmethod
+    def _feedback_target_id(execution_context: ToolExecutionContext | None) -> str | None:
+        if execution_context is None:
+            return None
+        if execution_context.subject_id:
+            return execution_context.subject_id
+        if execution_context.channel_id:
+            return execution_context.channel_id
+        return None
+
+    @staticmethod
+    def _tool_call_name(tool_call: Any) -> str | None:
+        if isinstance(tool_call, dict):
+            function_obj = tool_call.get("function")
+            if isinstance(function_obj, dict):
+                name = function_obj.get("name")
+                return str(name) if name else None
+            return None
+
+        function_obj = getattr(tool_call, "function", None)
+        if function_obj is None:
+            return None
+        if isinstance(function_obj, dict):
+            name = function_obj.get("name")
+            return str(name) if name else None
+        name = getattr(function_obj, "name", None)
+        return str(name) if name else None
             
 
     async def _provider_complete_message(
