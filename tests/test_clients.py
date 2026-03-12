@@ -101,7 +101,7 @@ class TestTelegramClientHandlers:
 
         assert orchestrator.calls == [("42", "start", [])]
         update.message.reply_text.assert_called_once_with(
-            "start onboarding", parse_mode="Markdown"
+            "start onboarding", parse_mode="MarkdownV2"
         )
 
     @pytest.mark.asyncio
@@ -119,7 +119,7 @@ class TestTelegramClientHandlers:
 
         handler.assert_awaited_once_with("What is 2+2?")
         update.message.reply_text.assert_called_once_with(
-            "LLM reply", parse_mode="Markdown"
+            "LLM reply", parse_mode="MarkdownV2"
         )
 
     @pytest.mark.asyncio
@@ -144,7 +144,7 @@ class TestTelegramClientHandlers:
         first_call = update.message.reply_text.await_args_list[0]
         second_call = update.message.reply_text.await_args_list[1]
         assert first_call.args == ("broken *markdown",)
-        assert first_call.kwargs == {"parse_mode": "Markdown"}
+        assert first_call.kwargs == {"parse_mode": "MarkdownV2"}
         assert second_call.args == ("broken *markdown",)
         assert second_call.kwargs == {}
 
@@ -252,7 +252,7 @@ class TestTelegramClientHandlers:
 
         await client._handle_message(update, context)
 
-        update.message.reply_text.assert_called_once_with("LLM reply", parse_mode="Markdown")
+        update.message.reply_text.assert_called_once_with("LLM reply", parse_mode="MarkdownV2")
         context.bot.send_photo.assert_awaited_once_with(
             chat_id="42",
             photo="https://example.com/reference.jpg",

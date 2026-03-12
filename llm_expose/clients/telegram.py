@@ -25,8 +25,13 @@ from llm_expose.config.models import TelegramClientConfig
 from llm_expose.core.content_parts import build_user_content
 
 logger = logging.getLogger(__name__)
-MARKDOWN_PARSE_MODE = "Markdown"
 
+MARKDOWN_PARSE_MODE = "MarkdownV2"
+
+RESERVED_PARSE_CHARACTERS = [
+  '(',
+  ')'
+]
 
 class TelegramClient(BaseClient):
     """Messaging client adapter for Telegram.
@@ -54,6 +59,9 @@ class TelegramClient(BaseClient):
     async def _reply_text_safe(self, message, text: str, **kwargs):
         """Send a reply using Markdown; retry as plain text on parse errors."""
         try:
+            # Escape special characters in Telegram markdown
+            for char in RESERVED_PARSE_CHARACTERS:
+                text = text.replace(char, f"\\{char}")
             return await message.reply_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
         except BadRequest as exc:
             if "Can't parse entities" not in str(exc):

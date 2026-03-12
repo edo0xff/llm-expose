@@ -916,11 +916,11 @@ class Orchestrator:
         pending_count = len(self._pending_approvals)
 
         lines = [
-            f"*📊 Status: {exposure}*",
-            f"Model: `{model}`",
-            f"History: {msg_count} message(s) in this chat",
-            f"Active channels: {active_channels}",
-            f"Pending approvals: {pending_count}",
+            f"*📊 Status: `{exposure}`*",
+            f"🤖 Model: `{model}`",
+            f"📝 History: {msg_count} message(s) in this chat",
+            f"📢 Active channels: {active_channels}",
+            f"📝 Pending approvals: {pending_count}",
         ]
 
         if self._mcp_runtime is not None and self._mcp_runtime_initialized:
@@ -949,14 +949,14 @@ class Orchestrator:
         last_completion = last.get("completion_tokens")
         last_total = last.get("total_tokens")
         lines.append(
-            "Usage last: "
+            "🧮 Usage last: "
             f"p={last_prompt if last_prompt is not None else '-'} "
             f"c={last_completion if last_completion is not None else '-'} "
             f"t={last_total if last_total is not None else '-'}"
         )
 
         totals_line = (
-            "Usage chat: "
+            "🧮 Usage chat: "
             f"p={usage_stats.prompt_tokens} "
             f"c={usage_stats.completion_tokens} "
             f"t={usage_stats.total_tokens}"
