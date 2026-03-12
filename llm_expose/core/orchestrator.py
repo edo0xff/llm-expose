@@ -67,6 +67,15 @@ class _PendingApproval:
     execution_context: ToolExecutionContext | None = None
 
 
+@dataclass
+class _UsageStats:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+    last: dict[str, Any] | None = None
+
+
 class Orchestrator:
     """Connects an LLM *provider* to a messaging *client*.
 
@@ -111,6 +120,7 @@ class Orchestrator:
         self._approval_ttl_seconds = 600
         self._channel_name = config.channel_name
         self._paired_channel_ids: set[str] = set()
+        self._usage_by_channel: dict[str, _UsageStats] = {}
 
         if self._channel_name:
             try:
@@ -303,6 +313,7 @@ class Orchestrator:
         tools = self._mcp_runtime.tools if self._mcp_runtime is not None else []
         if not tools:
             reply = await self._provider.complete(history)
+            self._record_provider_usage(channel_id)
             history.append({"role": "assistant", "content": reply})
             return reply
 
@@ -420,6 +431,7 @@ class Orchestrator:
     ) -> str:
         assistant_message = await self._provider_complete_message(
             history,
+            channel_id=channel_id,
             tools=tools,
             tool_choice=self._tool_choice,
         )
@@ -503,6 +515,7 @@ class Orchestrator:
         for _ in range(max_tool_rounds):
             assistant_message = await self._provider_complete_message(
                 history,
+                channel_id=channel_id,
                 tools=tools,
                 tool_choice=self._tool_choice,
             )
@@ -742,12 +755,88 @@ class Orchestrator:
             return str(name) if name else None
         name = getattr(function_obj, "name", None)
         return str(name) if name else None
+
+    @staticmethod
+    def _normalize_usage(raw_usage: Any) -> dict[str, Any] | None:
+        if not isinstance(raw_usage, dict):
+            return None
+
+        def _coerce_int(value: Any) -> int | None:
+            if value is None:
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        def _coerce_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        prompt_tokens = _coerce_int(raw_usage.get("prompt_tokens"))
+        completion_tokens = _coerce_int(raw_usage.get("completion_tokens"))
+        total_tokens = _coerce_int(raw_usage.get("total_tokens"))
+        cost_usd = _coerce_float(raw_usage.get("cost_usd"))
+        latency_ms = _coerce_int(raw_usage.get("latency_ms"))
+        model = raw_usage.get("model")
+
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
+
+        if (
+            prompt_tokens is None
+            and completion_tokens is None
+            and total_tokens is None
+            and cost_usd is None
+        ):
+            return None
+
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
+            "latency_ms": latency_ms,
+            "model": model,
+        }
+
+    def _record_provider_usage(self, channel_id: str) -> None:
+        get_last_usage = getattr(self._provider, "get_last_usage", None)
+        if not callable(get_last_usage):
+            return
+
+        raw_usage = get_last_usage()
+        usage = self._normalize_usage(raw_usage)
+        if usage is None:
+            return
+
+        stats = self._usage_by_channel.setdefault(channel_id, _UsageStats())
+        stats.last = usage
+
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        total_tokens = usage.get("total_tokens")
+        cost_usd = usage.get("cost_usd")
+
+        if isinstance(prompt_tokens, int):
+            stats.prompt_tokens += prompt_tokens
+        if isinstance(completion_tokens, int):
+            stats.completion_tokens += completion_tokens
+        if isinstance(total_tokens, int):
+            stats.total_tokens += total_tokens
+        if isinstance(cost_usd, float):
+            stats.cost_usd += cost_usd
             
 
     async def _provider_complete_message(
         self,
         history: list[Message],
         *,
+        channel_id: str,
         tools: list[ToolSpec],
         tool_choice: ToolChoice | None,
     ) -> Message:
@@ -760,6 +849,7 @@ class Orchestrator:
             )
             if inspect.isawaitable(maybe_message):
                 message = await maybe_message
+                self._record_provider_usage(channel_id)
                 if isinstance(message, dict):
                     return message
                 if hasattr(message, "model_dump"):
@@ -775,6 +865,7 @@ class Orchestrator:
             tools=tools,
             tool_choice=tool_choice,
         )
+        self._record_provider_usage(channel_id)
         return {"role": "assistant", "content": content}
 
     async def _handle_message_with_mcp_tools(
@@ -848,11 +939,38 @@ class Orchestrator:
         else:
             lines.append("MCP: not configured")
 
+        usage_stats = self._usage_by_channel.get(channel_id)
+        if usage_stats is None or usage_stats.last is None:
+            lines.append("Usage: no provider metrics yet")
+            return "\n".join(lines)
+
+        last = usage_stats.last
+        last_prompt = last.get("prompt_tokens")
+        last_completion = last.get("completion_tokens")
+        last_total = last.get("total_tokens")
+        lines.append(
+            "Usage last: "
+            f"p={last_prompt if last_prompt is not None else '-'} "
+            f"c={last_completion if last_completion is not None else '-'} "
+            f"t={last_total if last_total is not None else '-'}"
+        )
+
+        totals_line = (
+            "Usage chat: "
+            f"p={usage_stats.prompt_tokens} "
+            f"c={usage_stats.completion_tokens} "
+            f"t={usage_stats.total_tokens}"
+        )
+        if usage_stats.cost_usd > 0:
+            totals_line += f" | est_cost=${usage_stats.cost_usd:.6f}"
+        lines.append(totals_line)
+
         return "\n".join(lines)
 
     def _admin_clear_history(self, channel_id: str) -> str:
         """Clear conversation history for the given channel."""
         self._histories[channel_id] = []
+        self._usage_by_channel.pop(channel_id, None)
         return "✅ Conversation history cleared."
 
     def _admin_tools(self) -> str:
@@ -908,6 +1026,7 @@ class Orchestrator:
     async def _admin_reload(self, channel_id: str) -> str:
         """Clear history, reset system prompt cache, and reinitialize MCP."""
         self._histories[channel_id] = []
+        self._usage_by_channel.pop(channel_id, None)
         self._loaded_system_prompt = None
 
         if self._mcp_runtime is not None and self._mcp_runtime_initialized:

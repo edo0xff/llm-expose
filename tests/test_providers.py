@@ -115,6 +115,34 @@ class TestComplete:
         assert result == ""
 
     @pytest.mark.asyncio
+    async def test_complete_captures_usage_metadata(self) -> None:
+        cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
+        provider = LiteLLMProvider(cfg)
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "Hello, world!"
+        mock_response.usage.prompt_tokens = 12
+        mock_response.usage.completion_tokens = 8
+        mock_response.usage.total_tokens = 20
+        mock_response.model = "gpt-4o"
+
+        with (
+            patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)),
+            patch("litellm.completion_cost", return_value=0.00123),
+        ):
+            result = await provider.complete([{"role": "user", "content": "Hi"}])
+
+        assert result == "Hello, world!"
+        usage = provider.get_last_usage()
+        assert usage is not None
+        assert usage["prompt_tokens"] == 12
+        assert usage["completion_tokens"] == 8
+        assert usage["total_tokens"] == 20
+        assert usage["cost_usd"] == 0.00123
+        assert usage["model"] == "gpt-4o"
+        assert isinstance(usage["latency_ms"], int)
+
+    @pytest.mark.asyncio
     async def test_complete_local_uses_openai_sdk(self) -> None:
         cfg = ProviderConfig(
             provider_name="local",

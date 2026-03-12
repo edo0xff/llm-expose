@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import warnings
 from typing import Any, AsyncIterator
 
@@ -30,6 +31,7 @@ class LiteLLMProvider(BaseProvider):
         self._config = config
         self._openai_client: AsyncOpenAI | None = None
         self._supports_vision = self._detect_vision_support()
+        self._last_usage: dict[str, Any] | None = None
         if config.api_key:
             litellm.api_key = config.api_key
             # Preserve historical behavior expected by tests and local users.
@@ -120,6 +122,77 @@ class LiteLLMProvider(BaseProvider):
             "tool_calls": getattr(message, "tool_calls", None),
         }
 
+    @staticmethod
+    def _as_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _as_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_completion_usage(self, response: Any, *, elapsed_ms: int) -> dict[str, Any] | None:
+        usage_obj = getattr(response, "usage", None)
+        if usage_obj is None and isinstance(response, dict):
+            usage_obj = response.get("usage")
+
+        prompt_tokens: int | None = None
+        completion_tokens: int | None = None
+        total_tokens: int | None = None
+
+        if usage_obj is not None:
+            if isinstance(usage_obj, dict):
+                prompt_tokens = self._as_int(usage_obj.get("prompt_tokens"))
+                completion_tokens = self._as_int(usage_obj.get("completion_tokens"))
+                total_tokens = self._as_int(usage_obj.get("total_tokens"))
+            else:
+                prompt_tokens = self._as_int(getattr(usage_obj, "prompt_tokens", None))
+                completion_tokens = self._as_int(getattr(usage_obj, "completion_tokens", None))
+                total_tokens = self._as_int(getattr(usage_obj, "total_tokens", None))
+
+        # Compute total when provider omits it but gives partial counters.
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
+
+        cost_usd: float | None = None
+        try:
+            # Estimated value from LiteLLM pricing metadata when available.
+            cost_usd = self._as_float(litellm.completion_cost(completion_response=response))
+        except Exception:
+            cost_usd = None
+
+        if prompt_tokens is None and completion_tokens is None and total_tokens is None and cost_usd is None:
+            return None
+
+        model_name = getattr(response, "model", None)
+        if isinstance(response, dict):
+            model_name = model_name or response.get("model")
+
+        usage: dict[str, Any] = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
+            "model": str(model_name or self._config.model.strip()),
+            "latency_ms": int(elapsed_ms),
+        }
+        return usage
+
+    def get_last_usage(self) -> dict[str, Any] | None:
+        """Return the most recent completion usage payload when available."""
+        if self._last_usage is None:
+            return None
+        return dict(self._last_usage)
+
     async def complete_with_message(
         self,
         messages: list[Message],
@@ -129,6 +202,8 @@ class LiteLLMProvider(BaseProvider):
     ) -> Message:
         """Return the full assistant message payload for tool-call handling."""
         messages = self._prepare_messages(messages)
+        self._last_usage = None
+        started = time.monotonic()
         request_kwargs: dict[str, Any] = {}
         if tools is not None:
             request_kwargs["tools"] = tools
@@ -142,6 +217,8 @@ class LiteLLMProvider(BaseProvider):
                 messages=messages,
                 **request_kwargs,
             )
+            elapsed_ms = (time.monotonic() - started) * 1000
+            self._last_usage = self._extract_completion_usage(response, elapsed_ms=int(elapsed_ms))
             return self._message_to_dict(response.choices[0].message)
 
         response = await litellm.acompletion(
@@ -149,6 +226,8 @@ class LiteLLMProvider(BaseProvider):
             **request_kwargs,
             **self._common_kwargs(),
         )
+        elapsed_ms = (time.monotonic() - started) * 1000
+        self._last_usage = self._extract_completion_usage(response, elapsed_ms=int(elapsed_ms))
         return self._message_to_dict(response.choices[0].message)
 
     async def complete(

@@ -350,6 +350,7 @@ class TestOrchestrator:
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="The answer is 42.")
+        provider.get_last_usage = MagicMock(return_value=None)
         client = MagicMock()
         client.start = AsyncMock()
         client.stop = AsyncMock()
@@ -363,6 +364,30 @@ class TestOrchestrator:
         reply = await orch._handle_message("What is the answer?")
         provider.complete.assert_awaited_once()
         assert reply == "The answer is 42."
+
+    @pytest.mark.asyncio
+    async def test_admin_status_includes_usage_when_provider_exposes_it(self) -> None:
+        orch, provider, _ = self._make_orchestrator()
+        provider.get_last_usage.return_value = {
+            "prompt_tokens": 11,
+            "completion_tokens": 7,
+            "total_tokens": 18,
+            "cost_usd": 0.000321,
+            "model": "gpt-4o",
+            "latency_ms": 42,
+        }
+
+        await orch._handle_message("42", "hello")
+        status = await orch.handle_admin_command("42", "status", [])
+
+        assert "Usage last: p=11 c=7 t=18" in status
+        assert "Usage chat: p=11 c=7 t=18 | est_cost=$0.000321" in status
+
+    @pytest.mark.asyncio
+    async def test_admin_status_usage_fallback_when_unavailable(self) -> None:
+        orch, _, _ = self._make_orchestrator()
+        status = await orch.handle_admin_command("42", "status", [])
+        assert "Usage: no provider metrics yet" in status
 
     @pytest.mark.asyncio
     async def test_handle_message_does_not_echo_input_images_as_references(self) -> None:
