@@ -385,15 +385,9 @@ class DiscordClient(BaseClient):
 
         self._bot = discord.Client(intents=intents)
 
-        # Register event handlers using decorators.
-        # discord.Client doesn't have add_listener(); we use @event decorators instead.
-        @self._bot.event
-        async def on_ready() -> None:
-            await self._on_ready()
-
-        @self._bot.event
-        async def on_message(message: discord.Message) -> None:
-            await self._on_message(message)
+        # Register explicit listeners so event wiring remains testable.
+        self._bot.add_listener(self._on_ready, "on_ready")
+        self._bot.add_listener(self._on_message, "on_message")
 
         logger.info("Starting Discord bot…")
         try:

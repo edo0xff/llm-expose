@@ -1,0 +1,34 @@
+site_name: llm-expose
+site_description: Expose LLM assistants through messaging platforms
+site_url: https://edo0xff.github.io/llm-expose
+repo_url: https://github.com/edo0xff/llm-expose
+repo_name: edo0xff/llm-expose
+
+theme:
+  name: material
+  language: en
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/overview.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+  - Guides:
+      - Channels and Pairing: guides/channels-and-pairing.md
+      - MCP Integration: guides/mcp-integration.md
+  - Architecture:
+      - System Overview: architecture/system-overview.md
+  - API:
+      - Orchestrator: api/orchestrator.md
+      - MCP Runtime: api/mcp-runtime.md

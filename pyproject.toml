@@ -9,6 +9,19 @@ description = "CLI tool to expose LLMs through messaging clients (Telegram, Disc
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "edo0xff" }]
+keywords = ["llm", "telegram", "discord", "mcp", "cli", "chatbot"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Communications :: Chat",
+]
 dependencies = [
     "fastmcp>=0.1.0",
     "litellm>=1.63.3",
@@ -22,6 +35,29 @@ dependencies = [
     "pyyaml>=6.0.2",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "black>=24.10.0",
+    "build>=1.2.2",
+    "coverage[toml]>=7.6.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.5.44",
+    "mkdocstrings[python]>=0.26.2",
+    "mypy>=1.13.0",
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.8.0",
+    "twine>=5.1.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/edo0xff/llm-expose"
+Repository = "https://github.com/edo0xff/llm-expose"
+Documentation = "https://github.com/edo0xff/llm-expose"
+Issues = "https://github.com/edo0xff/llm-expose/issues"
+Changelog = "https://github.com/edo0xff/llm-expose/blob/main/CHANGELOG.md"
+
 [project.scripts]
 llm-expose = "llm_expose.cli.main:app"
 
@@ -32,3 +68,39 @@ include = ["llm_expose*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-v --strict-markers --cov=llm_expose --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["llm_expose"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 60
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["llm_expose"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+pretty = true

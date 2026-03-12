@@ -1,19 +1,124 @@
 # llm-expose
-CLI tool for expose LLM's using common chat services (like telegram).
 
-## Pairing system
+Expose LLM-powered assistants through messaging platforms such as Telegram and Discord.
 
-Incoming chat/channel IDs must be paired before this service replies.
+`llm-expose` gives you a channel-first CLI workflow: configure providers, attach channels, control pairings, and optionally integrate MCP servers for tool-aware completions.
 
-When an unpaired chat sends a message, the service replies with:
+## Features
+
+- Multi-channel support (Telegram and Discord).
+- LiteLLM provider support for broad model compatibility.
+- Local OpenAI-compatible endpoint support.
+- MCP server integration for tool-aware responses.
+- Pairing-based access control per channel.
+- CLI-first setup and operations.
+
+## Installation
+
+### From PyPI (planned)
+
+```bash
+pip install llm-expose
+```
+
+### From source
+
+```bash
+git clone https://github.com/edo0xff/llm-expose.git
+cd llm-expose
+pip install -e .
+```
+
+### Development install
+
+```bash
+pip install -e .[dev]
+```
+
+## Quick Start
+
+1. Configure a model:
+
+```bash
+llm-expose add model --name gpt4o-mini --provider openai --model-id gpt-4o-mini
+```
+
+2. Configure a channel (interactive):
+
+```bash
+llm-expose add channel
+```
+
+3. Pair an allowed user/chat ID:
+
+```bash
+llm-expose add pair 123456789 --channel my-telegram
+```
+
+4. Start the channel runtime:
+
+```bash
+llm-expose start --channel my-telegram
+```
+
+If you are unsure about available options, run:
+
+```bash
+llm-expose --help
+llm-expose add --help
+llm-expose start --help
+```
+
+## Pairing Model
+
+Incoming chat/channel IDs must be explicitly paired before the service replies.
+
+When an unpaired ID sends a message, the service returns:
 
 `This instance is not paired. Run llm-expose add pair <channel-id>`
 
-Pairings are scoped per saved channel configuration and persisted server-side.
+Pairings are stored per channel configuration.
 
-### Commands
+Common pairing commands:
 
 - `llm-expose add pair <id> --channel <channel-name>`
 - `llm-expose list pairs`
 - `llm-expose list pairs --channel <channel-name>`
 - `llm-expose delete pair <id> --channel <channel-name>`
+
+## Configuration Workflow
+
+`llm-expose` currently uses CLI commands to persist configuration (models, channels, and MCP settings).
+
+Recommended setup order:
+
+1. Add one or more models (`llm-expose add model ...`).
+2. Add one or more channels (`llm-expose add channel ...`).
+3. Add optional MCP servers (`llm-expose add mcp ...`).
+4. Pair allowed IDs (`llm-expose add pair ...`).
+5. Run exposure service (`llm-expose start ...`).
+
+## Development
+
+Run quality checks:
+
+```bash
+ruff check .
+black --check .
+mypy llm_expose
+pytest
+```
+
+## Roadmap
+
+- PyPI release automation.
+- Hosted docs site with architecture and API references.
+- More channel adapters and provider presets.
+
+## Contributing
+
+See `CONTRIBUTING.md`.
+
+## License
+
+MIT. See `LICENSE`.

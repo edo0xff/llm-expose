@@ -22,7 +22,6 @@ from telegram.error import Conflict
 
 from llm_expose.config import (
     MCPServerConfig,
-    MCPSettingsConfig,
     ProviderConfig,
     TelegramClientConfig,
     add_pair as add_channel_pair,
@@ -42,7 +41,6 @@ from llm_expose.config import (
     load_model,
     save_channel,
     save_mcp_server,
-    save_mcp_settings,
     save_model,
 )
 from llm_expose.config.models import DiscordClientConfig, ExposureConfig
@@ -572,7 +570,7 @@ def add_channel(
 
     # ---- Save ---------------------------------------------------------
     try:
-        saved_path = save_channel(name, client_cfg)
+        save_channel(name, client_cfg)
     except Exception as exc:
         console.print(f"[red]Failed to save channel configuration: {exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -662,7 +660,7 @@ def delete_model_cmd(
     if yes:
         pass  # confirmed by flag
     elif no_input:
-        console.print(f"[red]Error: deletion requires -y with --no-input.[/red]")
+        console.print("[red]Error: deletion requires -y with --no-input.[/red]")
         raise typer.Exit(code=1)
     elif not Confirm.ask(f"[bold red]Are you sure you want to delete model '{name}'?[/bold red]", default=False):
         console.print("[yellow]Deletion cancelled.[/yellow]")
@@ -711,7 +709,7 @@ def delete_channel_cmd(
     if yes:
         pass  # confirmed by flag
     elif no_input:
-        console.print(f"[red]Error: deletion requires -y with --no-input.[/red]")
+        console.print("[red]Error: deletion requires -y with --no-input.[/red]")
         raise typer.Exit(code=1)
     elif not Confirm.ask(f"[bold red]Are you sure you want to delete channel '{name}'?[/bold red]", default=False):
         console.print("[yellow]Deletion cancelled.[/yellow]")
@@ -1111,7 +1109,7 @@ def delete_mcp_cmd(
     if yes:
         pass  # confirmed by flag
     elif no_input:
-        console.print(f"[red]Error: deletion requires -y with --no-input.[/red]")
+        console.print("[red]Error: deletion requires -y with --no-input.[/red]")
         raise typer.Exit(code=1)
     elif not Confirm.ask(
         f"[bold red]Are you sure you want to delete MCP server '{name}'?[/bold red]",
@@ -1211,7 +1209,7 @@ def start(
         provider_cfg = load_model(model_name)
     except FileNotFoundError:
         console.print(f"[red]Error: Model '{model_name}' not found.[/red]")
-        console.print(f"[yellow]Tip: Run [bold]llm-expose list model[/bold] to see available models.[/yellow]")
+        console.print("[yellow]Tip: Run [bold]llm-expose list model[/bold] to see available models.[/yellow]")
         raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Failed to load model '{model_name}': {exc}[/red]")
@@ -1463,7 +1461,7 @@ def message(
                 with open(system_prompt_file, "r", encoding="utf-8") as f:
                     system_prompt = f.read()
                 if not system_prompt.strip():
-                    console.print(f"[red]Error: System prompt file is empty.[/red]")
+                    console.print("[red]Error: System prompt file is empty.[/red]")
                     raise typer.Exit(code=1)
             except FileNotFoundError:
                 console.print(f"[red]Error: System prompt file '{system_prompt_file}' not found.[/red]")
@@ -1477,7 +1475,7 @@ def message(
                 with open(client_cfg.system_prompt_path, "r", encoding="utf-8") as f:
                     system_prompt = f.read()
                 if not system_prompt.strip():
-                    console.print(f"[red]Error: Channel's system prompt file is empty.[/red]")
+                    console.print("[red]Error: Channel's system prompt file is empty.[/red]")
                     raise typer.Exit(code=1)
             except FileNotFoundError:
                 console.print(f"[red]Error: Channel's system prompt file '{client_cfg.system_prompt_path}' not found.[/red]")
