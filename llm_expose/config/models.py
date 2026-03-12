@@ -115,7 +115,7 @@ class MCPServerConfig(BaseModel):
     )
     url: Optional[str] = Field(
         default=None,
-        description="Server URL for SSE transport",
+        description="Server URL for SSE or HTTP transport",
     )
     env: dict[str, str] = Field(
         default_factory=dict,

@@ -46,9 +46,20 @@ llm-expose add mcp \
 	-y --no-input
 ```
 
+### HTTP transport
+
+```bash
+llm-expose add mcp \
+	--name remote-http-tools \
+	--transport http \
+	--url http://mcp.internal:3000/mcp \
+	--tool-confirmation required \
+	-y --no-input
+```
+
 CLI note:
 
-- `add mcp` currently supports `stdio` and `sse` transports.
+- `add mcp` supports `stdio`, `sse`, and `http` transports.
 - `builtin-core` tools are provided by runtime internals and can be attached by name on channels.
 
 ## Attach MCP servers to channels
@@ -99,6 +110,11 @@ servers:
 		enabled: true
 		tool_confirmation: required
 		allowed_tools: [ticket_create, ticket_get]
+	- name: remote-http-tools
+		transport: http
+		url: http://mcp.internal:3000/mcp
+		enabled: true
+		tool_confirmation: required
 ```
 
 ## Runtime behavior notes
@@ -120,5 +136,5 @@ Then start the channel and send a tool-relevant prompt.
 
 - No tools appear: verify server names are attached on the channel config.
 - Stdio server fails: verify `command` and `args` exist in runtime environment.
-- SSE server fails: verify URL/network reachability.
+- SSE/HTTP server fails: verify URL/network reachability.
 - Tool runs are blocked unexpectedly: verify global vs per-server confirmation settings.

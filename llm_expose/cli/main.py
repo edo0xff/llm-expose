@@ -932,10 +932,10 @@ def list_mcp_cmd() -> None:
 @add_app.command("mcp")
 def add_mcp_cmd(
     name: Optional[str] = typer.Option(None, "--name", "-n", help="MCP server config name"),
-    transport: Optional[str] = typer.Option(None, "--transport", help="Transport type: stdio or sse"),
+    transport: Optional[str] = typer.Option(None, "--transport", help="Transport type: stdio, sse, or http"),
     command: Optional[str] = typer.Option(None, "--command", help="Command to run (stdio transport)"),
     args: Optional[list[str]] = typer.Option(None, "--args", help="Command args as space-separated list (stdio): --args foo bar baz"),
-    url: Optional[str] = typer.Option(None, "--url", help="SSE URL (sse transport)"),
+    url: Optional[str] = typer.Option(None, "--url", help="Server URL (sse/http transport)"),
     enabled: Optional[bool] = typer.Option(None, "--enabled/--disabled", help="Enable or disable the server (default: enabled)"),
     tool_confirmation: Optional[str] = typer.Option(None, "--tool-confirmation", help="Tool confirmation mode: default, required, or never"),
     yes: bool = typer.Option(False, "-y", "--yes", help="Confirm overwrite without prompt"),
@@ -948,6 +948,8 @@ def add_mcp_cmd(
         llm-expose add mcp --name my-server --transport stdio --command uv --args run mcp-server -y --no-input
 
         llm-expose add mcp --name remote --transport sse --url http://localhost:3000/sse --tool-confirmation never -y --no-input
+
+        llm-expose add mcp --name remote-http --transport http --url http://localhost:3000/mcp --tool-confirmation never -y --no-input
     """
     if not no_input:
         _print_banner()
@@ -979,7 +981,7 @@ def add_mcp_cmd(
             raise typer.Exit()
 
     # ---- Transport --------------------------------------------------
-    _valid_transports = ["stdio", "sse"]
+    _valid_transports = ["stdio", "sse", "http"]
     if transport is None:
         if no_input:
             console.print("[red]Error: --transport is required with --no-input.[/red]")
@@ -1013,19 +1015,20 @@ def add_mcp_cmd(
         if args is None and not no_input:
             raw_args_str = Prompt.ask("  Command args (space-separated)", default="").strip()
             resolved_args = raw_args_str.split() if raw_args_str else []
-    else:  # sse
+    else:
+        transport_label = transport.upper()
         if url is None:
             if no_input:
-                console.print("[red]Error: --url is required for sse transport with --no-input.[/red]")
+                console.print(f"[red]Error: --url is required for {transport} transport with --no-input.[/red]")
                 raise typer.Exit(code=1)
-            resolved_url = Prompt.ask("  SSE URL (example: http://localhost:3000/sse)").strip()
+            resolved_url = Prompt.ask(f"  {transport_label} URL (example: http://localhost:3000/sse)").strip()
             if not resolved_url:
-                console.print("[red]URL cannot be empty for SSE transport.[/red]")
+                console.print(f"[red]URL cannot be empty for {transport_label} transport.[/red]")
                 raise typer.Exit(code=1)
         else:
             resolved_url = url.strip()
             if not resolved_url:
-                console.print("[red]--url cannot be empty for sse transport.[/red]")
+                console.print(f"[red]--url cannot be empty for {transport} transport.[/red]")
                 raise typer.Exit(code=1)
 
     # ---- Enabled ----------------------------------------------------

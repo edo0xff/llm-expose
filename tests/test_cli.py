@@ -176,6 +176,29 @@ class TestCliHelpers:
         assert saved_cfg.args == []
         assert saved_cfg.url == "http://localhost:3000/sse"
 
+    def test_add_mcp_cmd_saves_http_server(self) -> None:
+        with patch("llm_expose.cli.main._print_banner"), patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch(
+            "llm_expose.cli.main._select_from_list",
+            side_effect=["http", "never"],
+        ), patch(
+            "llm_expose.cli.main.Prompt.ask",
+            side_effect=["http-core", "http://localhost:3000/mcp"],
+        ), patch(
+            "llm_expose.cli.main.Confirm.ask", return_value=True
+        ), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mcp_server_mock:
+            add_mcp_cmd(name=None, transport=None, command=None, args=None, url=None, enabled=None, tool_confirmation=None, yes=False, no_input=False)
+
+        saved_cfg = save_mcp_server_mock.call_args.args[0]
+        assert saved_cfg.name == "http-core"
+        assert saved_cfg.transport == "http"
+        assert saved_cfg.command is None
+        assert saved_cfg.args == []
+        assert saved_cfg.url == "http://localhost:3000/mcp"
+
     def test_list_pairs_cmd_shows_configured_pairs(self) -> None:
         with patch("llm_expose.cli.main.list_pairs", return_value={"telegram-main": ["42"]}), patch(
             "llm_expose.cli.main.console.print"
@@ -741,6 +764,27 @@ class TestHeadlessAddMcp:
         assert saved_cfg.url == "http://localhost:3000/sse"
         assert saved_cfg.command is None
 
+    def test_headless_creates_http_server(self) -> None:
+        with patch("llm_expose.cli.main.list_mcp_servers", return_value=[]), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mock:
+            add_mcp_cmd(
+                name="my-http",
+                transport="http",
+                command=None,
+                args=None,
+                url="http://localhost:3000/mcp",
+                enabled=True,
+                tool_confirmation="required",
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[0]
+        assert saved_cfg.transport == "http"
+        assert saved_cfg.url == "http://localhost:3000/mcp"
+        assert saved_cfg.command is None
+
     def test_headless_fails_when_stdio_missing_command(self) -> None:
         with pytest.raises(typer.Exit) as exc_info, patch(
             "llm_expose.cli.main.list_mcp_servers", return_value=[]
@@ -766,6 +810,24 @@ class TestHeadlessAddMcp:
             add_mcp_cmd(
                 name="my-sse",
                 transport="sse",
+                command=None,
+                args=None,
+                url=None,
+                enabled=True,
+                tool_confirmation="default",
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_when_http_missing_url(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_mcp_cmd(
+                name="my-http",
+                transport="http",
                 command=None,
                 args=None,
                 url=None,
