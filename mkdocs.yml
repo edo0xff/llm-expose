@@ -25,8 +25,11 @@ nav:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quick-start.md
   - Guides:
+      - Channel Configuration: guides/channel-configuration.md
       - Channels and Pairing: guides/channels-and-pairing.md
+      - Provider Configuration: guides/provider-configuration.md
       - MCP Integration: guides/mcp-integration.md
+      - Deployment: guides/deployment.md
   - Architecture:
       - System Overview: architecture/system-overview.md
   - API:
