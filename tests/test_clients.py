@@ -10,8 +10,10 @@ import pytest
 from telegram.error import BadRequest
 
 from llm_expose.clients.base import BaseClient, MessageResponse
+from llm_expose.clients.discord import DiscordClient
 from llm_expose.clients.telegram import TelegramClient
 from llm_expose.config.models import (
+    DiscordClientConfig,
     ExposureConfig,
     MCPConfig,
     MCPServerConfig,
@@ -334,6 +336,151 @@ class TestTelegramClientHandlers:
         sent_text = client._app.bot.send_message.await_args.kwargs["text"]
         assert "Failed" in sent_text
         assert "boom" in sent_text
+
+
+# ---------------------------------------------------------------------------
+# DiscordClient
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordClient:
+    def _make_client(self) -> DiscordClient:
+        cfg = DiscordClientConfig(bot_token="discord-token")
+        return DiscordClient(cfg, handler=AsyncMock(return_value="reply"))
+
+    @pytest.mark.asyncio
+    async def test_on_message_ignores_bot_authors(self) -> None:
+        client = self._make_client()
+        msg = MagicMock()
+        msg.author.bot = True
+
+        await client._on_message(msg)
+
+        assert client._approval_messages == {}
+
+    @pytest.mark.asyncio
+    async def test_on_message_calls_legacy_handler(self) -> None:
+        cfg = DiscordClientConfig(bot_token="discord-token")
+        handler = AsyncMock(return_value="LLM reply")
+        client = DiscordClient(cfg, handler=handler)
+
+        typing_cm = AsyncMock()
+        typing_cm.__aenter__ = AsyncMock(return_value=None)
+        typing_cm.__aexit__ = AsyncMock(return_value=None)
+
+        channel = MagicMock()
+        channel.id = 777
+        channel.typing = MagicMock(return_value=typing_cm)
+        channel.send = AsyncMock()
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.__str__.return_value = "user-1"
+        msg.content = "hello"
+        msg.attachments = []
+        msg.channel = channel
+        msg.guild = None
+
+        await client._on_message(msg)
+
+        handler.assert_awaited_once_with("hello")
+        channel.send.assert_awaited_once_with("LLM reply")
+
+    @pytest.mark.asyncio
+    async def test_on_message_logs_skip_for_empty_payload(self, caplog: pytest.LogCaptureFixture) -> None:
+        cfg = DiscordClientConfig(bot_token="discord-token")
+        handler = AsyncMock(return_value="LLM reply")
+        client = DiscordClient(cfg, handler=handler)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.content = ""
+        msg.attachments = []
+        msg.guild = None
+        msg.channel = MagicMock()
+        msg.channel.id = 777
+
+        with caplog.at_level(logging.INFO, logger="llm_expose.clients.discord"):
+            await client._on_message(msg)
+
+        handler.assert_not_awaited()
+        assert "Skipping Discord message with no text and no image attachments" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_send_message_chunks_long_text(self) -> None:
+        client = self._make_client()
+
+        channel = MagicMock()
+        channel.send = AsyncMock(side_effect=[MagicMock(id=1), MagicMock(id=2)])
+
+        bot = MagicMock()
+        bot.get_channel = MagicMock(return_value=channel)
+        client._ensure_bot_ready = AsyncMock(return_value=bot)  # type: ignore[method-assign]
+
+        text = "x" * 2500
+        result = await client.send_message("42", text)
+
+        assert channel.send.await_count == 2
+        assert result["status"] == "sent"
+        assert result["user_id"] == "42"
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_status_running_edits_approval_message(self) -> None:
+        client = self._make_client()
+        client._approval_messages["abc123"] = ("42", "99")
+
+        message = MagicMock()
+        message.edit = AsyncMock()
+        channel = MagicMock()
+        channel.fetch_message = AsyncMock(return_value=message)
+
+        client._get_channel = AsyncMock(return_value=channel)  # type: ignore[method-assign]
+        client._bot = MagicMock()
+
+        await client.notify_tool_status("42", "running", "tool.search", approval_id="abc123")
+
+        message.edit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_status_failed_sends_message(self) -> None:
+        client = self._make_client()
+
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        client._get_channel = AsyncMock(return_value=channel)  # type: ignore[method-assign]
+
+        await client.notify_tool_status("42", "failed", "tool.search", detail="boom")
+
+        channel.send.assert_awaited_once()
+        sent_text = channel.send.await_args.args[0]
+        assert "Failed" in sent_text
+        assert "boom" in sent_text
+
+    @pytest.mark.asyncio
+    async def test_start_registers_named_listeners(self) -> None:
+        cfg = DiscordClientConfig(bot_token="discord-token")
+        client = DiscordClient(cfg, handler=AsyncMock(return_value="reply"))
+
+        mock_bot = MagicMock()
+        mock_bot.add_listener = MagicMock()
+        mock_bot.start = AsyncMock(return_value=None)
+
+        with patch("llm_expose.clients.discord.discord.Client", return_value=mock_bot):
+            await client.start()
+
+        mock_bot.add_listener.assert_any_call(client._on_ready, "on_ready")
+        mock_bot.add_listener.assert_any_call(client._on_message, "on_message")
+        mock_bot.start.assert_awaited_once_with("discord-token")
+
+    def test_build_intents_enables_message_handling(self) -> None:
+        intents = DiscordClient._build_intents()
+
+        assert intents.message_content is True
+        for attr in ("messages", "guild_messages", "dm_messages"):
+            if hasattr(intents, attr):
+                assert getattr(intents, attr) is True
 
 
 # ---------------------------------------------------------------------------

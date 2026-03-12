@@ -30,6 +30,8 @@ from llm_expose.config.loader import (
     save_pairings_config,
 )
 from llm_expose.config.models import (
+    ClientConfig,
+    DiscordClientConfig,
     MCPConfig,
     MCPServerConfig,
     MCPSettingsConfig,
@@ -41,6 +43,8 @@ from llm_expose.config.models import (
 __all__ = [
     "ProviderConfig",
     "TelegramClientConfig",
+    "DiscordClientConfig",
+    "ClientConfig",
     "MCPConfig",
     "MCPServerConfig",
     "MCPSettingsConfig",

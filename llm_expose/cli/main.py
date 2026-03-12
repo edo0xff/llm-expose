@@ -45,7 +45,7 @@ from llm_expose.config import (
     save_mcp_settings,
     save_model,
 )
-from llm_expose.config.models import ExposureConfig
+from llm_expose.config.models import DiscordClientConfig, ExposureConfig
 from llm_expose.core.builtin_mcp import ToolExecutionContext
 from llm_expose.core.content_parts import (
     build_local_attachment_descriptor,
@@ -56,6 +56,7 @@ from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.litellm_provider import LiteLLMProvider
 from llm_expose.clients.telegram import TelegramClient
+from llm_expose.clients.discord import DiscordClient
 from llm_expose.clients.base import BaseClient
 
 logger = logging.getLogger(__name__)
@@ -390,7 +391,12 @@ def add_model(
 @add_app.command("channel")
 def add_channel(
     name: Optional[str] = typer.Option(None, "--name", "-n", help="Config name for this channel"),
-    bot_token: Optional[str] = typer.Option(None, "--bot-token", help="Telegram bot token"),
+    bot_token: Optional[str] = typer.Option(None, "--bot-token", help="Client bot token"),
+    client_type: Optional[str] = typer.Option(
+        None,
+        "--client-type",
+        help="Client type: telegram or discord",
+    ),
     model_name: Optional[str] = typer.Option(None, "--model-name", help="Model config name to use for LLM completion"),
     mcp_server: list[str] = typer.Option([], "--mcp-server", help="MCP server name to attach (repeatable)"),
     system_prompt_path: Optional[str] = typer.Option(None, "--system-prompt-path", help="Path to system prompt text file"),
@@ -401,10 +407,15 @@ def add_channel(
 
     Examples (headless):
 
-        llm-expose add channel --name telegram --bot-token 123:TOKEN --model-name gpt4o -y --no-input
+        llm-expose add channel --name telegram --client-type telegram --bot-token 123:TOKEN --model-name gpt4o -y --no-input
 
-        llm-expose add channel --name telegram --bot-token 123:TOKEN --mcp-server my-mcp --model-name gpt4o -y --no-input
+        llm-expose add channel --name discord --client-type discord --bot-token DISCORD_TOKEN --mcp-server my-mcp --model-name gpt4o -y --no-input
     """
+    # When invoked as a plain function (tests/internal calls), Typer option
+    # defaults may still be OptionInfo objects instead of concrete values.
+    if isinstance(client_type, typer.models.OptionInfo):
+        client_type = None
+
     if not no_input:
         _print_banner()
         console.print("\n[bold green]Add a new channel configuration[/bold green]\n")
@@ -431,23 +442,56 @@ def add_channel(
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit()
 
-    # ---- Bot token ---------------------------------------------------
+    # ---- Client type + bot token ------------------------------------
+    # In headless mode the caller doesn't pass --client-type, so we try to
+    # detect it from the token format (Telegram tokens contain ':') or just
+    # default to telegram for backward-compat.
+    resolved_client_type: str = "telegram"
+    if client_type is not None:
+        candidate = client_type.strip().lower()
+        if candidate not in {"telegram", "discord"}:
+            console.print("[red]Error: --client-type must be 'telegram' or 'discord'.[/red]")
+            raise typer.Exit(code=1)
+        resolved_client_type = candidate
+
     if bot_token is None:
         if no_input:
             console.print("[red]Error: --bot-token is required with --no-input.[/red]")
             raise typer.Exit(code=1)
         # ---- Client type selector (interactive) ----------------------
-        _select_from_list(
+        client_type_choice = _select_from_list(
             "Select messaging client:",
-            ["Telegram"],
-            # TODO: Add Discord, Slack once implemented
+            ["telegram", "discord"],
         )
-        raw_bot_token = ""
-        while not raw_bot_token:
-            raw_bot_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])").strip()
-            if not raw_bot_token:
-                console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
-        bot_token = raw_bot_token
+        resolved_client_type = client_type_choice.lower()
+
+        if resolved_client_type == "telegram":
+            raw_bot_token = ""
+            while not raw_bot_token:
+                raw_bot_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])").strip()
+                if not raw_bot_token:
+                    console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+            bot_token = raw_bot_token
+        else:
+            console.print(
+                "\n[bold cyan]Discord setup:[/bold cyan] Make sure you have enabled the"
+                " [bold]Message Content Intent[/bold] in the Discord Developer Portal"
+                " (Bot → Privileged Gateway Intents).\n"
+            )
+            raw_bot_token = ""
+            while not raw_bot_token:
+                raw_bot_token = Prompt.ask("  Discord bot token (from Developer Portal)").strip()
+                if not raw_bot_token:
+                    console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+            bot_token = raw_bot_token
+    else:
+        # Headless fallback when --client-type isn't provided.
+        if client_type is None:
+            import re as _re
+
+            if _re.match(r"^\d+:", bot_token.strip()):
+                resolved_client_type = "telegram"
+
     bot_token = bot_token.strip()
     if not bot_token:
         console.print("[red]Bot token cannot be empty.[/red]")
@@ -511,12 +555,20 @@ def add_channel(
             if resolved_system_prompt_path:
                 console.print("\n[green]System prompt file path configured successfully![/green]")
 
-    client_cfg = TelegramClientConfig(
-        bot_token=bot_token,
-        mcp_servers=attached_mcp_servers,
-        system_prompt_path=resolved_system_prompt_path,
-        model_name=resolved_model_name,
-    )
+    if resolved_client_type == "discord":
+        client_cfg = DiscordClientConfig(
+            bot_token=bot_token,
+            mcp_servers=attached_mcp_servers,
+            system_prompt_path=resolved_system_prompt_path,
+            model_name=resolved_model_name,
+        )
+    else:
+        client_cfg = TelegramClientConfig(
+            bot_token=bot_token,
+            mcp_servers=attached_mcp_servers,
+            system_prompt_path=resolved_system_prompt_path,
+            model_name=resolved_model_name,
+        )
 
     # ---- Save ---------------------------------------------------------
     try:
@@ -1464,7 +1516,10 @@ def message(
                         )
                     # --suppress-send only disables the CLI's final auto-delivery.
                     # Tool calls still require a sender to execute explicit send actions.
-                    tool_sender = TelegramClient(client_cfg, handler=_placeholder_handler)
+                    if client_cfg.client_type == "discord":
+                        tool_sender: BaseClient = DiscordClient(client_cfg, handler=_placeholder_handler)  # type: ignore[arg-type]
+                    else:
+                        tool_sender = TelegramClient(client_cfg, handler=_placeholder_handler)
                     execution_context = ToolExecutionContext(
                         execution_mode="one-shot",
                         channel_id=user_id,
@@ -1540,7 +1595,10 @@ def message(
             }
         else:
             # Client requires a handler, but send_message() doesn't use it
-            client = TelegramClient(client_cfg, handler=_placeholder_handler)
+            if client_cfg.client_type == "discord":
+                client: BaseClient = DiscordClient(client_cfg, handler=_placeholder_handler)  # type: ignore[arg-type]
+            else:
+                client = TelegramClient(client_cfg, handler=_placeholder_handler)
 
             # Keep a single event loop for all send operations in this CLI invocation.
             async def _send_all() -> dict:
@@ -1595,7 +1653,10 @@ def _start_service(config: ExposureConfig) -> None:
     )
 
     provider = LiteLLMProvider(config.provider)
-    client = TelegramClient(config.client, handler=_placeholder_handler)
+    if config.client.client_type == "discord":
+        client: BaseClient = DiscordClient(config.client, handler=_placeholder_handler)  # type: ignore[arg-type]
+    else:
+        client = TelegramClient(config.client, handler=_placeholder_handler)
     orchestrator = Orchestrator(config=config, provider=provider, client=client)
 
     console.print(

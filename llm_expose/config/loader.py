@@ -9,6 +9,8 @@ from typing import Optional
 import yaml
 
 from llm_expose.config.models import (
+    ClientConfig,
+    DiscordClientConfig,
     MCPConfig,
     MCPServerConfig,
     MCPSettingsConfig,
@@ -168,12 +170,12 @@ def delete_model(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def save_channel(name: str, config: TelegramClientConfig) -> Path:
+def save_channel(name: str, config: "TelegramClientConfig | DiscordClientConfig") -> Path:
     """Persist a channel configuration to a YAML file.
 
     Args:
         name: Unique name for this channel configuration.
-        config: The :class:`TelegramClientConfig` instance to save.
+        config: The client config instance to save (Telegram or Discord).
 
     Returns:
         The :class:`~pathlib.Path` where the config was written.
@@ -187,14 +189,14 @@ def save_channel(name: str, config: TelegramClientConfig) -> Path:
     return path
 
 
-def load_channel(name: str) -> TelegramClientConfig:
+def load_channel(name: str) -> ClientConfig:
     """Load a channel configuration from disk by name.
 
     Args:
         name: The name used when the channel was saved.
 
     Returns:
-        The deserialized :class:`TelegramClientConfig`.
+        The deserialized client config (routed via ``client_type`` discriminator).
 
     Raises:
         FileNotFoundError: If no channel with the given name exists.
@@ -205,9 +207,12 @@ def load_channel(name: str) -> TelegramClientConfig:
         raise FileNotFoundError(f"No channel configuration named '{name}' found")
     with path.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
-    # Remove the 'name' key as it's not part of TelegramClientConfig
+    # Remove the 'name' key as it's not part of any ClientConfig model
     data.pop("name", None)
-    return TelegramClientConfig.model_validate(data)
+    # Pydantic's discriminated union routes via client_type field
+    from pydantic import TypeAdapter
+    _adapter: TypeAdapter[ClientConfig] = TypeAdapter(ClientConfig)
+    return _adapter.validate_python(data)
 
 
 def list_channels() -> list[str]:

@@ -13,6 +13,8 @@ from llm_expose.config.models import (
     MCPSettingsConfig,
     ProviderConfig,
     TelegramClientConfig,
+    DiscordClientConfig,
+    ClientConfig,
 )
 from llm_expose.config.loader import (
     add_pair,
@@ -142,6 +144,77 @@ class TestTelegramClientConfig:
             system_prompt_path="./prompts/my_prompt.md",
         )
         assert cfg.system_prompt_path == "./prompts/my_prompt.md"
+
+
+# ---------------------------------------------------------------------------
+# DiscordClientConfig
+# ---------------------------------------------------------------------------
+
+
+class TestDiscordClientConfig:
+    def test_valid_config(self) -> None:
+        cfg = DiscordClientConfig(bot_token="MTk4NjIyNDgzNDcxOTI1MjQ4.deadbeef")
+        assert cfg.client_type == "discord"
+        assert cfg.bot_token == "MTk4NjIyNDgzNDcxOTI1MjQ4.deadbeef"
+
+    def test_strips_whitespace_from_token(self) -> None:
+        cfg = DiscordClientConfig(bot_token="  my-discord-token  ")
+        assert cfg.bot_token == "my-discord-token"
+
+    def test_empty_token_raises(self) -> None:
+        with pytest.raises(Exception):
+            DiscordClientConfig(bot_token="")
+
+    def test_whitespace_only_token_raises(self) -> None:
+        with pytest.raises(Exception):
+            DiscordClientConfig(bot_token="   ")
+
+    def test_mcp_servers_defaults_to_empty(self) -> None:
+        cfg = DiscordClientConfig(bot_token="discord-tok")
+        assert cfg.mcp_servers == []
+
+    def test_mcp_servers_are_normalized_and_deduplicated(self) -> None:
+        cfg = DiscordClientConfig(
+            bot_token="discord-tok",
+            mcp_servers=["  foo ", "bar", "foo", "", "   ", "baz"],
+        )
+        assert cfg.mcp_servers == ["foo", "bar", "baz"]
+
+    def test_system_prompt_path_strips_whitespace(self) -> None:
+        cfg = DiscordClientConfig(
+            bot_token="discord-tok",
+            system_prompt_path="  /path/prompt.txt  ",
+        )
+        assert cfg.system_prompt_path == "/path/prompt.txt"
+
+    def test_system_prompt_path_whitespace_only_becomes_none(self) -> None:
+        cfg = DiscordClientConfig(
+            bot_token="discord-tok",
+            system_prompt_path="   ",
+        )
+        assert cfg.system_prompt_path is None
+
+    def test_model_name_strips_whitespace(self) -> None:
+        cfg = DiscordClientConfig(bot_token="discord-tok", model_name="  gpt-4o  ")
+        assert cfg.model_name == "gpt-4o"
+
+    def test_model_name_whitespace_only_becomes_none(self) -> None:
+        cfg = DiscordClientConfig(bot_token="discord-tok", model_name="   ")
+        assert cfg.model_name is None
+
+    def test_client_config_union_routes_to_discord(self) -> None:
+        from pydantic import TypeAdapter
+        adapter: TypeAdapter[ClientConfig] = TypeAdapter(ClientConfig)
+        cfg = adapter.validate_python({"client_type": "discord", "bot_token": "discord-tok"})
+        assert isinstance(cfg, DiscordClientConfig)
+        assert cfg.client_type == "discord"
+
+    def test_client_config_union_routes_to_telegram(self) -> None:
+        from pydantic import TypeAdapter
+        adapter: TypeAdapter[ClientConfig] = TypeAdapter(ClientConfig)
+        cfg = adapter.validate_python({"client_type": "telegram", "bot_token": "123:tok"})
+        assert isinstance(cfg, TelegramClientConfig)
+        assert cfg.client_type == "telegram"
 
 
 class TestMCPConfig:
@@ -332,6 +405,47 @@ class TestChannelLoader:
         assert loaded.bot_token == "123:tok"
         assert loaded.mcp_servers == []
         assert loaded.system_prompt_path is None
+
+    def test_save_and_load_discord_roundtrip(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        cfg = DiscordClientConfig(
+            bot_token="discord-tok",
+            mcp_servers=["my-mcp"],
+            system_prompt_path="/prompts/bot.txt",
+            model_name="gpt-4o",
+        )
+
+        save_channel("discord-chan", cfg)
+        loaded = load_channel("discord-chan")
+
+        assert isinstance(loaded, DiscordClientConfig)
+        assert loaded.client_type == "discord"
+        assert loaded.bot_token == "discord-tok"
+        assert loaded.mcp_servers == ["my-mcp"]
+        assert loaded.system_prompt_path == "/prompts/bot.txt"
+        assert loaded.model_name == "gpt-4o"
+
+    def test_mixed_telegram_and_discord_channels(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
+        tg_cfg = TelegramClientConfig(bot_token="123:tok")
+        dc_cfg = DiscordClientConfig(bot_token="discord-tok")
+
+        save_channel("tg-chan", tg_cfg)
+        save_channel("dc-chan", dc_cfg)
+
+        loaded_tg = load_channel("tg-chan")
+        loaded_dc = load_channel("dc-chan")
+
+        assert loaded_tg.client_type == "telegram"
+        assert loaded_dc.client_type == "discord"
 
 
 class TestMCPLoader:
