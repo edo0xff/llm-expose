@@ -27,10 +27,9 @@
   --md-border-color: #404040;
 }
 
-/* Enhanced code block styling */
+/* Code styling */
 .md-typeset code {
   background-color: rgba(124, 77, 255, 0.07);
-  border-radius: 4px;
   padding: 0.15em 0.4em;
   font-weight: 500;
 }
@@ -39,17 +38,15 @@
   background-color: rgba(124, 77, 255, 0.15);
 }
 
-/* Code block container */
 .md-typeset pre {
   border-radius: 8px;
   border-left: 4px solid #7c4dff;
 }
 
-/* Improved admonition styling */
+/* Admonition styling */
 .md-typeset .admonition {
   border-left: 4px solid #7c4dff;
   border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .md-typeset .admonition.note {
@@ -72,11 +69,7 @@
   border-left-color: #2196f3;
 }
 
-[data-md-color-scheme="slate"] .md-typeset .admonition {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-/* Improved badges in README */
+/* Badge styling */
 .md-typeset img[alt*="badge"],
 .md-typeset img[alt*="Badge"],
 .md-typeset img[alt*="PyPI"],
@@ -86,31 +79,14 @@
 .md-typeset img[alt*="Docs"] {
   margin: 0.3em 0.2em 0.3em 0;
   vertical-align: middle;
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
-.md-typeset img[alt*="badge"]:hover,
-.md-typeset img[alt*="Badge"]:hover,
-.md-typeset img[alt*="PyPI"]:hover,
-.md-typeset img[alt*="License"]:hover,
-.md-typeset img[alt*="Python"]:hover,
-.md-typeset img[alt*="Tests"]:hover,
-.md-typeset img[alt*="Docs"]:hover {
-  transform: scale(1.05);
-}
-
-/* Enhanced buttons */
+/* Button styling */
 .md-button {
   border-radius: 6px;
   text-transform: uppercase;
   font-weight: 600;
   letter-spacing: 0.5px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.md-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .md-button.md-button--primary {
@@ -143,38 +119,48 @@
 /* Navigation tabs */
 .md-tabs {
   background-color: #f5f5f5;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 [data-md-color-scheme="slate"] .md-tabs {
   background-color: #2c2c2c;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 /* Header and footer styling */
 .md-header {
   background-color: #512da8;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 .md-footer {
   background-color: #2c2c2c;
+  padding: 3em;
 }
 
-/* Sidebar (nav) styling */
+.md-footer-meta {
+  background-color: rgba(0, 0, 0, 0);
+}
+
+/* Navigation link styling */
+.md-tabs__link,
 .md-nav__link {
-  border-radius: 4px;
-  transition: all 0.2s ease;
+  color: #512da8;
 }
 
+.md-tabs__link:hover,
 .md-nav__link:hover {
   background-color: rgba(124, 77, 255, 0.1);
   color: #512da8;
 }
 
+.md-tabs__link--active,
 .md-nav__link--active {
   border-left: 3px solid #7c4dff;
-  padding-left: calc(1rem - 3px);
+  padding-left: 0.75em;
+  color: #512da8;
+}
+
+.md-tabs__item--active {
+  border-bottom: 3px solid #7c4dff;
+  color: #512da8;
 }
 
 /* Breadcrumbs styling */
@@ -191,17 +177,15 @@
   font-weight: 600;
 }
 
-/* Tab-specific styling for code examples */
+/* Tab styling for code examples */
 .md-typeset .tabbed-set {
   margin: 1em 0;
   border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 .md-typeset .tabbed-set > label {
   border-radius: 4px 4px 0 0;
   font-weight: 500;
-  transition: all 0.2s ease;
 }
 
 .md-typeset .tabbed-set > label:hover {
@@ -213,20 +197,20 @@
   color: #512da8;
 }
 
-/* Improved search box */
+/* Search box styling */
 .md-search__input {
   border-radius: 6px;
 }
 
 .md-search__input::placeholder {
-  color: rgba(0, 0, 0, 0.5);
+  color: #ffffff;
 }
 
 [data-md-color-scheme="slate"] .md-search__input::placeholder {
   color: rgba(255, 255, 255, 0.5);
 }
 
-/* Enhanced lists */
+/* List styling */
 .md-typeset ul,
 .md-typeset ol {
   margin: 1em 0;
@@ -237,18 +221,11 @@
   line-height: 1.6;
 }
 
-.md-typeset li:hover {
-  background-color: rgba(124, 77, 255, 0.02);
-  padding-left: 0.5em;
-  transition: all 0.2s ease;
-}
-
 /* Links styling */
 .md-typeset a {
   color: #7c4dff;
   text-decoration: none;
   border-bottom: 1px solid rgba(124, 77, 255, 0.3);
-  transition: all 0.2s ease;
 }
 
 .md-typeset a:hover {
@@ -256,7 +233,7 @@
   color: #512da8;
 }
 
-/* Better spacing for headings */
+/* Heading styling */
 .md-typeset h1,
 .md-typeset h2,
 .md-typeset h3 {
@@ -301,7 +278,6 @@
   padding: 1.5em;
   margin: 1em 0;
   background-color: #fafafa;
-  transition: all 0.3s ease;
 }
 
 [data-md-color-scheme="slate"] .md-typeset .content-card {
@@ -309,53 +285,7 @@
   background-color: #242424;
 }
 
-.md-typeset .content-card:hover {
-  box-shadow: 0 4px 12px rgba(81, 45, 168, 0.15);
-  transform: translateY(-2px);
-}
-
 /* Footer links */
-.md-footer__link {
-  transition: color 0.2s ease;
-}
-
 .md-footer__link:hover {
   color: #7c4dff;
-}
-
-/* Mobile responsiveness */
-@media (max-width: 600px) {
-  .md-typeset h1 {
-    font-size: 1.5em;
-  }
-  
-  .md-typeset h2 {
-    font-size: 1.25em;
-  }
-  
-  .md-button {
-    font-size: 0.9em;
-  }
-  
-  .md-header {
-    height: auto;
-  }
-}
-
-/* Print styling */
-@media print {
-  .md-header,
-  .md-nav,
-  .md-search {
-    display: none;
-  }
-  
-  .md-main {
-    margin: 0;
-  }
-  
-  .md-typeset {
-    font-size: 12pt;
-    line-height: 1.6;
-  }
 }
