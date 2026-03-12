@@ -14,7 +14,11 @@ from llm_expose.cli.main import (
     add_pair_cmd,
     add_channel,
     add_mcp_cmd,
+    add_model,
+    delete_model_cmd,
+    delete_channel_cmd,
     delete_pair_cmd,
+    delete_mcp_cmd,
     list_pairs_cmd,
     message,
     _parse_multi_select_numbers,
@@ -62,7 +66,7 @@ class TestCliHelpers:
         ), patch(
             "llm_expose.cli.main.save_channel", return_value=Path("/tmp/ch.yaml")
         ) as save_channel_mock:
-            add_channel()
+            add_channel(name=None, bot_token=None, model_name=None, mcp_server=[], system_prompt_path=None, yes=False, no_input=False)
 
         saved_cfg = save_channel_mock.call_args.args[1]
         assert saved_cfg.bot_token == "123:tok"
@@ -83,7 +87,7 @@ class TestCliHelpers:
         ), patch(
             "llm_expose.cli.main.save_channel", return_value=Path("/tmp/ch.yaml")
         ) as save_channel_mock:
-            add_channel()
+            add_channel(name=None, bot_token=None, model_name=None, mcp_server=[], system_prompt_path=None, yes=False, no_input=False)
 
         saved_cfg = save_channel_mock.call_args.args[1]
         assert saved_cfg.mcp_servers == ["builtin-core"]
@@ -105,7 +109,7 @@ class TestCliHelpers:
             "llm_expose.cli.main.save_channel", return_value=Path("/tmp/ch.yaml")
         ) as save_channel_mock:
             open_mock.return_value.__enter__.return_value.read.return_value = "Channel prompt"
-            add_channel()
+            add_channel(name=None, bot_token=None, model_name=None, mcp_server=[], system_prompt_path=None, yes=False, no_input=False)
 
         saved_cfg = save_channel_mock.call_args.args[1]
         assert saved_cfg.system_prompt_path == "/tmp/prompt.txt"
@@ -114,7 +118,7 @@ class TestCliHelpers:
         with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
             "llm_expose.cli.main.add_channel_pair"
         ) as add_pair_mock:
-            add_pair_cmd("42", channel="telegram-main")
+            add_pair_cmd("42", channel="telegram-main", no_input=False)
 
         add_pair_mock.assert_called_once_with("telegram-main", "42")
 
@@ -122,7 +126,7 @@ class TestCliHelpers:
         with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
             "llm_expose.cli.main.Prompt.ask", return_value="84"
         ), patch("llm_expose.cli.main.add_channel_pair") as add_pair_mock:
-            add_pair_cmd(None, channel="telegram-main")
+            add_pair_cmd(None, channel="telegram-main", no_input=False)
 
         add_pair_mock.assert_called_once_with("telegram-main", "84")
 
@@ -140,7 +144,7 @@ class TestCliHelpers:
         ), patch(
             "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
         ) as save_mcp_server_mock:
-            add_mcp_cmd()
+            add_mcp_cmd(name=None, transport=None, command=None, args=None, url=None, enabled=None, tool_confirmation=None, yes=False, no_input=False)
 
         saved_cfg = save_mcp_server_mock.call_args.args[0]
         assert saved_cfg.name == "stdio-core"
@@ -163,7 +167,7 @@ class TestCliHelpers:
         ), patch(
             "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
         ) as save_mcp_server_mock:
-            add_mcp_cmd()
+            add_mcp_cmd(name=None, transport=None, command=None, args=None, url=None, enabled=None, tool_confirmation=None, yes=False, no_input=False)
 
         saved_cfg = save_mcp_server_mock.call_args.args[0]
         assert saved_cfg.name == "sse-core"
@@ -184,7 +188,7 @@ class TestCliHelpers:
         with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
             "llm_expose.cli.main.delete_channel_pair"
         ) as delete_pair_mock:
-            delete_pair_cmd("42", channel="telegram-main")
+            delete_pair_cmd("42", channel="telegram-main", yes=False, no_input=False)
 
         delete_pair_mock.assert_called_once_with("telegram-main", "42")
 
@@ -194,7 +198,7 @@ class TestCliHelpers:
         ), patch("llm_expose.cli.main._select_from_list", return_value="84"), patch(
             "llm_expose.cli.main.delete_channel_pair"
         ) as delete_pair_mock:
-            delete_pair_cmd(None, channel="telegram-main")
+            delete_pair_cmd(None, channel="telegram-main", yes=False, no_input=False)
 
         delete_pair_mock.assert_called_once_with("telegram-main", "84")
 
@@ -490,3 +494,431 @@ class TestCliHelpers:
         print_mock.assert_called_once_with(
             "[red]Error: --file cannot be used with --llm-completion.[/red]"
         )
+
+
+# ---------------------------------------------------------------------------
+# Headless mode tests
+# ---------------------------------------------------------------------------
+
+class TestHeadlessAddModel:
+    """Test add_model() with -y / --no-input flags."""
+
+    def test_headless_creates_model_with_all_flags(self) -> None:
+        with patch("llm_expose.cli.main.list_models", return_value=[]), patch(
+            "llm_expose.cli.main.save_model", return_value=Path("/tmp/m.yaml")
+        ) as save_mock:
+            add_model(
+                name="my-model",
+                provider="openai",
+                model_id="gpt-4o",
+                base_url=None,
+                api_key="sk-secret",
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[1]
+        assert saved_cfg.provider_name == "openai"
+        assert saved_cfg.model == "gpt-4o"
+        assert saved_cfg.api_key == "sk-secret"
+
+    def test_headless_local_model_no_api_key_required(self) -> None:
+        with patch("llm_expose.cli.main.list_models", return_value=[]), patch(
+            "llm_expose.cli.main.save_model", return_value=Path("/tmp/m.yaml")
+        ) as save_mock:
+            add_model(
+                name="local-model",
+                provider="local",
+                model_id="llama3",
+                base_url="http://localhost:11434",
+                api_key=None,
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[1]
+        assert saved_cfg.provider_name == "local"
+        assert saved_cfg.base_url == "http://localhost:11434"
+
+    def test_headless_fails_when_no_input_without_required_flags(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_models", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_model(
+                name=None,  # missing → should fail fast
+                provider="openai",
+                model_id="gpt-4o",
+                base_url=None,
+                api_key="sk-secret",
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_when_no_input_missing_model_id(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_models", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_model(
+                name="my-model",
+                provider="openai",
+                model_id=None,
+                base_url=None,
+                api_key="sk-secret",
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_when_existing_name_without_yes(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_models", return_value=["existing-model"]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_model(
+                name="existing-model",
+                provider="openai",
+                model_id="gpt-4o",
+                base_url=None,
+                api_key="sk-secret",
+                yes=False,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_overwrites_existing_model_with_yes(self) -> None:
+        with patch("llm_expose.cli.main.list_models", return_value=["existing-model"]), patch(
+            "llm_expose.cli.main.save_model", return_value=Path("/tmp/m.yaml")
+        ) as save_mock:
+            add_model(
+                name="existing-model",
+                provider="openai",
+                model_id="gpt-4o-mini",
+                base_url=None,
+                api_key="sk-secret",
+                yes=True,
+                no_input=True,
+            )
+
+        assert save_mock.called
+
+
+class TestHeadlessAddChannel:
+    """Test add_channel() with -y / --no-input flags."""
+
+    def test_headless_creates_channel_with_all_flags(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=[]), patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=["mcp-a"]
+        ), patch("llm_expose.cli.main.save_channel", return_value=Path("/tmp/ch.yaml")) as save_mock:
+            add_channel(
+                name="my-channel",
+                bot_token="123:tok",
+                model_name="my-model",
+                mcp_server=["mcp-a"],
+                system_prompt_path=None,
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[1]
+        assert saved_cfg.bot_token == "123:tok"
+        assert saved_cfg.model_name == "my-model"
+        assert saved_cfg.mcp_servers == ["mcp-a"]
+
+    def test_headless_fails_when_mcp_server_not_found(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_channels", return_value=[]
+        ), patch("llm_expose.cli.main.list_mcp_servers", return_value=[]), patch(
+            "llm_expose.cli.main.console.print"
+        ):
+            add_channel(
+                name="my-channel",
+                bot_token="123:tok",
+                model_name="my-model",
+                mcp_server=["nonexistent"],
+                system_prompt_path=None,
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_without_name(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_channels", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_channel(
+                name=None,
+                bot_token="123:tok",
+                model_name="my-model",
+                mcp_server=[],
+                system_prompt_path=None,
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_without_bot_token(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_channels", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_channel(
+                name="my-channel",
+                bot_token=None,
+                model_name="my-model",
+                mcp_server=[],
+                system_prompt_path=None,
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_creates_channel_without_model(self) -> None:
+        """model_name is optional even in headless mode."""
+        with patch("llm_expose.cli.main.list_channels", return_value=[]), patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch("llm_expose.cli.main.save_channel", return_value=Path("/tmp/ch.yaml")) as save_mock:
+            add_channel(
+                name="my-channel",
+                bot_token="123:tok",
+                model_name=None,
+                mcp_server=[],
+                system_prompt_path=None,
+                yes=True,
+                no_input=True,
+            )
+
+        assert save_mock.called
+
+
+class TestHeadlessAddMcp:
+    """Test add_mcp_cmd() with -y / --no-input flags."""
+
+    def test_headless_creates_stdio_server(self) -> None:
+        with patch("llm_expose.cli.main.list_mcp_servers", return_value=[]), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mock:
+            add_mcp_cmd(
+                name="my-server",
+                transport="stdio",
+                command="uv",
+                args=["run", "mcp-server"],
+                url=None,
+                enabled=True,
+                tool_confirmation="default",
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[0]
+        assert saved_cfg.name == "my-server"
+        assert saved_cfg.transport == "stdio"
+        assert saved_cfg.command == "uv"
+        assert saved_cfg.args == ["run", "mcp-server"]
+
+    def test_headless_creates_sse_server(self) -> None:
+        with patch("llm_expose.cli.main.list_mcp_servers", return_value=[]), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mock:
+            add_mcp_cmd(
+                name="my-sse",
+                transport="sse",
+                command=None,
+                args=None,
+                url="http://localhost:3000/sse",
+                enabled=True,
+                tool_confirmation="required",
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[0]
+        assert saved_cfg.transport == "sse"
+        assert saved_cfg.url == "http://localhost:3000/sse"
+        assert saved_cfg.command is None
+
+    def test_headless_fails_when_stdio_missing_command(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_mcp_cmd(
+                name="my-server",
+                transport="stdio",
+                command=None,
+                args=None,
+                url=None,
+                enabled=True,
+                tool_confirmation="default",
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_when_sse_missing_url(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_mcp_cmd(
+                name="my-sse",
+                transport="sse",
+                command=None,
+                args=None,
+                url=None,
+                enabled=True,
+                tool_confirmation="default",
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_without_name(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=[]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_mcp_cmd(
+                name=None,
+                transport="stdio",
+                command="uv",
+                args=None,
+                url=None,
+                enabled=True,
+                tool_confirmation="default",
+                yes=True,
+                no_input=True,
+            )
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_defaults_enabled_and_tool_confirmation(self) -> None:
+        with patch("llm_expose.cli.main.list_mcp_servers", return_value=[]), patch(
+            "llm_expose.cli.main.save_mcp_server", return_value=Path("/tmp/mcp.yaml")
+        ) as save_mock:
+            add_mcp_cmd(
+                name="my-server",
+                transport="stdio",
+                command="uv",
+                args=None,
+                url=None,
+                enabled=None,    # should default to True
+                tool_confirmation=None,  # should default to "default"
+                yes=True,
+                no_input=True,
+            )
+
+        saved_cfg = save_mock.call_args.args[0]
+        assert saved_cfg.enabled is True
+        assert saved_cfg.tool_confirmation == "default"
+
+
+class TestHeadlessAddPair:
+    """Test add_pair_cmd() with --no-input flag."""
+
+    def test_headless_fails_without_channel(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_channels", return_value=["telegram-main"]
+        ), patch("llm_expose.cli.main.console.print"):
+            add_pair_cmd("42", channel=None, no_input=True)
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_with_channel_adds_pair(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
+            "llm_expose.cli.main.add_channel_pair"
+        ) as add_pair_mock:
+            add_pair_cmd("42", channel="telegram-main", no_input=True)
+
+        add_pair_mock.assert_called_once_with("telegram-main", "42")
+
+
+class TestHeadlessDeleteModel:
+    """Test delete_model_cmd() with -y / --no-input flags."""
+
+    def test_headless_deletes_model_with_yes_flag(self) -> None:
+        with patch("llm_expose.cli.main.list_models", return_value=["my-model"]), patch(
+            "llm_expose.cli.main.delete_model"
+        ) as delete_mock, patch("llm_expose.cli.main.console.print"):
+            delete_model_cmd("my-model", yes=True, no_input=True)
+
+        delete_mock.assert_called_once_with("my-model")
+
+    def test_headless_fails_without_yes(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_models", return_value=["my-model"]
+        ), patch("llm_expose.cli.main.console.print"):
+            delete_model_cmd("my-model", yes=False, no_input=True)
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_fails_when_model_not_found(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_models", return_value=["other-model"]
+        ), patch("llm_expose.cli.main.console.print"):
+            delete_model_cmd("ghost-model", yes=True, no_input=True)
+
+        assert exc_info.value.exit_code == 1
+
+
+class TestHeadlessDeleteChannel:
+    """Test delete_channel_cmd() with -y / --no-input flags."""
+
+    def test_headless_deletes_channel_with_yes_flag(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["my-channel"]), patch(
+            "llm_expose.cli.main.delete_channel"
+        ) as delete_mock, patch("llm_expose.cli.main.console.print"):
+            delete_channel_cmd("my-channel", yes=True, no_input=True)
+
+        delete_mock.assert_called_once_with("my-channel")
+
+    def test_headless_fails_without_yes(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_channels", return_value=["my-channel"]
+        ), patch("llm_expose.cli.main.console.print"):
+            delete_channel_cmd("my-channel", yes=False, no_input=True)
+
+        assert exc_info.value.exit_code == 1
+
+
+class TestHeadlessDeleteMcp:
+    """Test delete_mcp_cmd() with -y / --no-input flags."""
+
+    def test_headless_deletes_server_with_yes_flag(self) -> None:
+        with patch("llm_expose.cli.main.list_mcp_servers", return_value=["my-server"]), patch(
+            "llm_expose.cli.main.delete_mcp_server"
+        ) as delete_mock, patch("llm_expose.cli.main.console.print"):
+            delete_mcp_cmd("my-server", yes=True, no_input=True)
+
+        delete_mock.assert_called_once_with("my-server")
+
+    def test_headless_fails_without_yes(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_mcp_servers", return_value=["my-server"]
+        ), patch("llm_expose.cli.main.console.print"):
+            delete_mcp_cmd("my-server", yes=False, no_input=True)
+
+        assert exc_info.value.exit_code == 1
+
+
+class TestHeadlessDeletePair:
+    """Test delete_pair_cmd() with --no-input flag."""
+
+    def test_headless_fails_without_channel(self) -> None:
+        with pytest.raises(typer.Exit) as exc_info, patch(
+            "llm_expose.cli.main.list_channels", return_value=["telegram-main"]
+        ), patch("llm_expose.cli.main.console.print"):
+            delete_pair_cmd("42", channel=None, no_input=True)
+
+        assert exc_info.value.exit_code == 1
+
+    def test_headless_deletes_pair_with_channel(self) -> None:
+        with patch("llm_expose.cli.main.list_channels", return_value=["telegram-main"]), patch(
+            "llm_expose.cli.main.delete_channel_pair"
+        ) as delete_mock:
+            delete_pair_cmd("42", channel="telegram-main", no_input=True)
+
+        delete_mock.assert_called_once_with("telegram-main", "42")
