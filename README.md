@@ -1,10 +1,16 @@
-# llm-expose
+<center>
+<picture>
+  <img width="550" alt="LLM Expose Logo" src="docs/assets/logo.png">
+</picture>
+</center>
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Language: Python](https://img.shields.io/badge/Language-Python-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/github/actions/workflow/status/edo0xff/llm-expose/test.yml?label=Tests&logo=github)](https://github.com/edo0xff/llm-expose/actions/workflows/test.yml)
 [![Docs](https://img.shields.io/badge/Docs-Live-brightgreen?logo=readthedocs)](https://edo0xff.github.io/llm-expose)
+
+---
 
 > Expose LLM-powered assistants through messaging platforms such as Telegram and Discord.
 
@@ -57,10 +63,13 @@ pip install -e '.[dev]'
 
 ## Quick Start
 
+`llm-expose` is interactive by default, which is usually the fastest path for humans.
+Use `--no-input` for headless automation and add `-y` when the command can require confirmation.
+
 1. Configure a model:
 
 ```bash
-llm-expose add model --name gpt4o-mini --provider openai --model-id gpt-4o-mini
+llm-expose add model
 ```
 
 2. Configure a channel (interactive):
@@ -78,7 +87,16 @@ llm-expose add pair 123456789 --channel my-telegram
 4. Start the channel runtime:
 
 ```bash
-llm-expose start --channel my-telegram
+llm-expose start
+```
+
+Headless equivalent (CI/scripts):
+
+```bash
+llm-expose add model --name gpt4o-mini --provider openai --model-id gpt-4o-mini -y --no-input
+llm-expose add channel --name my-telegram --client-type telegram --bot-token "123456789:AAExampleTelegramToken" --model-name gpt4o-mini -y --no-input
+llm-expose add pair 123456789 --channel my-telegram --no-input
+llm-expose start --channel my-telegram -y --no-input
 ```
 
 If you are unsure about available options, run:

@@ -2,6 +2,16 @@
 
 This guide focuses on running `llm-expose` as a long-lived containerized service.
 
+Deployment commands should be headless. Use `--no-input` and `-y` in runtime/start commands so containers never wait for interactive prompts.
+
+For first-time local setup of models/channels/pairs, you can use interactive mode before containerizing:
+
+```bash
+llm-expose add model
+llm-expose add channel
+llm-expose add pair
+```
+
 ## Deployment model
 
 - One channel runtime per process (`llm-expose start --channel <name>`).

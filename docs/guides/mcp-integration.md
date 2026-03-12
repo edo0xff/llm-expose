@@ -2,6 +2,9 @@
 
 You can attach one or more MCP servers to a channel so model completions can access external tools through the MCP runtime.
 
+`llm-expose add mcp` is interactive by default. For manual setup, run it without flags and follow prompts.
+Use headless flags (`--no-input`, and `-y` for overwrite confirmation) for scripts and CI.
+
 ## Typical flow
 
 1. Add MCP server config.
@@ -11,6 +14,14 @@ You can attach one or more MCP servers to a channel so model completions can acc
 Use the CLI `add mcp`, `list mcp`, and `delete mcp` commands to manage MCP definitions.
 
 ## Add MCP servers
+
+Interactive (human-friendly):
+
+```bash
+llm-expose add mcp
+```
+
+Headless examples:
 
 ### Stdio transport
 

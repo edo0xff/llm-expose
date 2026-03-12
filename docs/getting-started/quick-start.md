@@ -1,12 +1,29 @@
 # Quick Start
 
-This page gives copy-paste command paths for Telegram and Discord in headless mode.
+This page gives both interactive and headless command paths for Telegram and Discord.
 For platform setup details, troubleshooting, and production examples, continue to the guides:
 
 - [Channel Configuration](../guides/channel-configuration.md)
 - [Provider Configuration](../guides/provider-configuration.md)
 - [MCP Integration](../guides/mcp-integration.md)
 - [Deployment (Docker and Compose)](../guides/deployment.md)
+
+## Human-friendly interactive mode (default)
+
+Run these commands without extra flags and follow the prompts:
+
+```bash
+llm-expose add model
+llm-expose add channel
+llm-expose add pair
+llm-expose start
+```
+
+Use this path for first-time setup and manual operations.
+
+## Headless mode (automation)
+
+For scripts and CI, use `--no-input` and include all required values. Add `-y` when confirmations can appear.
 
 ## Telegram in 4 steps
 

@@ -2,6 +2,9 @@
 
 This guide covers practical model/provider setup patterns for online APIs and local OpenAI-compatible runtimes.
 
+`llm-expose add model` is interactive by default. For manual setup, run it without flags and select provider/model through prompts.
+Use the explicit examples below when you want repeatable headless commands (`--no-input`, and `-y` for overwrite confirmation).
+
 ## Provider model
 
 Each saved model includes:

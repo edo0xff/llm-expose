@@ -1,6 +1,19 @@
 # Channel Configuration
 
-This guide shows practical Telegram and Discord setups with repeatable, headless CLI commands.
+This guide shows practical Telegram and Discord setups with both interactive and headless CLI commands.
+
+## Interactive setup (default)
+
+For human-operated setup, run these commands and answer prompts:
+
+```bash
+llm-expose add model
+llm-expose add channel
+llm-expose add pair
+llm-expose start
+```
+
+Use `--no-input` only for automation. In headless mode, missing required values fail immediately.
 
 ## Telegram setup
 

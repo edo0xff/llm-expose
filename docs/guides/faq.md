@@ -35,6 +35,15 @@ A: llm-expose is actively maintained and used in production setups. However, it'
 
 ## Installation & Setup
 
+### Q: Should I use interactive mode or headless mode?
+
+A: Use **interactive mode** by default for manual setup. Most commands prompt for missing values automatically.
+
+Use **headless mode** for automation/CI:
+
+- Add `--no-input` to disable prompts and fail fast on missing required values.
+- Add `-y` / `--yes` when a command can ask for confirmation (for example overwrite/start flows).
+
 ### Q: I got "no matches found: .[dev]" error during dev install. How do I fix it?
 
 A: On macOS/Linux with **zsh**, the glob expansion needs quoting:

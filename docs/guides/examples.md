@@ -2,6 +2,9 @@
 
 Real-world examples and code snippets to help you get started with llm-expose.
 
+All examples below use the default interactive flow unless noted otherwise.
+For automation/CI, use the same commands with explicit flags plus `--no-input` (and `-y` when confirmation is required).
+
 ## Basic Setup Examples
 
 ### Example 1: Simple Telegram Bot with GPT-4o
@@ -15,17 +18,19 @@ Complete setup for a basic Telegram bot powered by GPT-4o.
     # (Create a new bot and copy the token)
     
     # 2. Add the model
-    llm-expose add model \
-      --name gpt4o \
-      --provider openai \
-      --model-id gpt-4o
+    llm-expose add model
+    # Suggested answers:
+    # - Name: gpt4o
+    # - Provider: openai
+    # - Model ID: gpt-4o
     
     # 3. Create the Telegram channel
     llm-expose add channel
-    # When prompted:
+    # Suggested answers:
     # - Name: telegram-main
     # - Type: telegram
     # - Token: <paste your token>
+    # - Model: gpt4o
     
     # 4. Pair your Telegram Chat ID
     # Get your ID from @userinfobot
@@ -64,17 +69,19 @@ Budget-friendly Discord bot using smaller Claude model.
 export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Add model (cheaper, fast)
-llm-expose add model \
-  --name claude-haiku \
-  --provider anthropic \
-  --model-id claude-3-haiku-20240307
+llm-expose add model
+# Suggested answers:
+# - Name: claude-haiku
+# - Provider: anthropic
+# - Model ID: claude-3-haiku-20240307
 
 # Create Discord channel
-# When prompted with add channel:
+llm-expose add channel
+# Suggested answers:
 # - Name: discord-support
 # - Type: discord
 # - Token: <your bot token>
-# - Server ID: <your server ID>
+# - Model: claude-haiku
 
 # Pair users (Discord User IDs)
 llm-expose add pair 987654321 --channel discord-support
@@ -100,7 +107,11 @@ Telegram bot that can read and write files on your system.
     export TELEGRAM_BOT_TOKEN="123:ABC..."
     
     # 2. Add model
-    llm-expose add model --name gpt4o --provider openai --model-id gpt-4o
+    llm-expose add model
+    # Suggested answers:
+    # - Name: gpt4o
+    # - Provider: openai
+    # - Model ID: gpt-4o
     
     # 3. Add MCP server for file system
     llm-expose add mcp
