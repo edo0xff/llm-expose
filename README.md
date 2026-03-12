@@ -21,7 +21,19 @@
 
 ## Installation
 
-### From PyPI (planned)
+### Quick Install (One-Liner)
+
+**Linux & macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/edo0xff/llm-expose/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+powershell -ExecutionPolicy Bypass -Command "iex (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/edo0xff/llm-expose/main/scripts/install-windows.ps1')"
+```
+
+### From PyPI
 
 ```bash
 pip install llm-expose
@@ -38,8 +50,10 @@ pip install -e .
 ### Development install
 
 ```bash
-pip install -e .[dev]
+pip install -e '.[dev]'
 ```
+
+> See [scripts/README.md](scripts/README.md) for detailed installation instructions and troubleshooting.
 
 ## Quick Start
 
