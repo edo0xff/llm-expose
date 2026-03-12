@@ -933,15 +933,15 @@ class Orchestrator:
                 server = self._mcp_runtime.get_tool_server_name(name) or "unknown"
                 server_counts[server] = server_counts.get(server, 0) + 1
             summary = ", ".join(f"{s}: {n}" for s, n in server_counts.items())
-            lines.append(f"MCP tools: {len(tools)} ({summary})")
+            lines.append(f"🔧 MCP tools: {len(tools)} ({summary})")
         elif self._mcp_runtime is not None:
-            lines.append("MCP: configured but not yet initialized")
+            lines.append("🔧 MCP: configured but not yet initialized")
         else:
-            lines.append("MCP: not configured")
+            lines.append("🔧 MCP: not configured")
 
         usage_stats = self._usage_by_channel.get(channel_id)
         if usage_stats is None or usage_stats.last is None:
-            lines.append("Usage: no provider metrics yet")
+            lines.append("📈 Usage: no provider metrics yet")
             return "\n".join(lines)
 
         last = usage_stats.last
@@ -949,14 +949,14 @@ class Orchestrator:
         last_completion = last.get("completion_tokens")
         last_total = last.get("total_tokens")
         lines.append(
-            "🧮 Usage last: "
+            "📈 Usage last: "
             f"p={last_prompt if last_prompt is not None else '-'} "
             f"c={last_completion if last_completion is not None else '-'} "
             f"t={last_total if last_total is not None else '-'}"
         )
 
         totals_line = (
-            "🧮 Usage chat: "
+            "📈 Usage chat: "
             f"p={usage_stats.prompt_tokens} "
             f"c={usage_stats.completion_tokens} "
             f"t={usage_stats.total_tokens}"
