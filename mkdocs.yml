@@ -3,10 +3,61 @@ site_description: Expose LLM assistants through messaging platforms
 site_url: https://edo0xff.github.io/llm-expose
 repo_url: https://github.com/edo0xff/llm-expose
 repo_name: edo0xff/llm-expose
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2024-2026 edo0xff | MIT License
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/edo0xff/llm-expose
+      name: GitHub
+  # Analytics configuration (optional)
+  # Uncomment and configure for Plausible Analytics or Google Analytics:
+  # analytics:
+  #   provider: custom  # For Plausible
+  #   domain: edo0xff.github.io/llm-expose
+
+extra_css:
+  - stylesheets/custom.css
 
 theme:
   name: material
   language: en
+  custom_dir: docs/overrides
+  palette:
+    # Light mode
+    - scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.select
+    - content.code.annotate
+    - content.tabs.link
+    - toc.integrate
+    - toc.follow
+    - header.autohide
 
 plugins:
   - search
@@ -17,6 +68,47 @@ plugins:
             show_source: true
             show_root_heading: true
             heading_level: 2
+  - glightbox:
+      effect: zoom
+      width: 100%
+      height: auto
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:pymdownx.emoji.twemoji
+      emoji_generator: !!python/name:pymdownx.emoji.to_svg
+  - pymdownx.highlight:
+      use_pygments: true
+      line_spans: __span
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
 
 nav:
   - Home: index.md
@@ -30,8 +122,21 @@ nav:
       - Provider Configuration: guides/provider-configuration.md
       - MCP Integration: guides/mcp-integration.md
       - Deployment: guides/deployment.md
+      - FAQ: guides/faq.md
+      - Troubleshooting: guides/troubleshooting.md
+      - Examples: guides/examples.md
   - Architecture:
       - System Overview: architecture/system-overview.md
   - API:
       - Orchestrator: api/orchestrator.md
       - MCP Runtime: api/mcp-runtime.md
+      - Clients:
+          - Base Client: api/clients-base.md
+          - Telegram Client: api/clients-telegram.md
+          - Discord Client: api/clients-discord.md
+      - Configuration: api/config.md
+      - Providers: api/providers.md
+      - Tools: api/tools.md
+      - Core: api/core.md
+  - Community:
+     - Contributing: contributing.md

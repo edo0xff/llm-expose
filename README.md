@@ -1,6 +1,12 @@
 # llm-expose
 
-Expose LLM-powered assistants through messaging platforms such as Telegram and Discord.
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Language: Python](https://img.shields.io/badge/Language-Python-3776ab?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/github/actions/workflow/status/edo0xff/llm-expose/test.yml?label=Tests&logo=github)](https://github.com/edo0xff/llm-expose/actions/workflows/test.yml)
+[![Docs](https://img.shields.io/badge/Docs-Live-brightgreen?logo=readthedocs)](https://edo0xff.github.io/llm-expose)
+
+> Expose LLM-powered assistants through messaging platforms such as Telegram and Discord.
 
 `llm-expose` gives you a channel-first CLI workflow: configure providers, attach channels, control pairings, and optionally integrate MCP servers for tool-aware completions.
 

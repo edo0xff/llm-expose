@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block footer %}
+<footer class="md-footer">
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-footer-copyright">
+        {% if config.copyright %}
+          <div class="md-footer-copyright__highlight">
+            {{ config.copyright }}
+          </div>
+        {% endif %}
+        Made with
+        <a href="https://www.mkdocs.org" title="MkDocs" target="_blank" rel="noopener">MkDocs</a>
+        and
+        <a href="https://squidfunk.github.io/mkdocs-material/" title="Material for MkDocs" target="_blank" rel="noopener">Material for MkDocs</a>
+      </div>
+      <div class="md-footer-links">
+        {% if config.repo_url %}
+          <a href="{{ config.repo_url }}" class="md-footer-link" title="Repository" target="_blank" rel="noopener">
+            <i class="fab fa-github"></i> GitHub
+          </a>
+        {% endif %}
+        <a href="{{ config.site_url }}/getting-started/overview/" class="md-footer-link" title="Documentation">
+          <i class="fas fa-book"></i> Docs
+        </a>
+        <a href="{{ config.site_url }}/guides/faq/" class="md-footer-link" title="FAQ">
+          <i class="fas fa-question-circle"></i> FAQ
+        </a>
+      </div>
+    </div>
+  </div>
+</footer>
+{% endblock %}
