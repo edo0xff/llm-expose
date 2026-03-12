@@ -99,8 +99,8 @@ _BANNER = r"""
 ╩═╝╩═╝╩ ╩  ╚═╝┴ └─┴  └─┘└─┘└─┘
 
 > LLM's at your service, wherever you chat.
-> v0.1-alpha
 > 100+ models supported via LiteLLM and local OpenAI-compatible servers.
+> Currently supports Telegram, Discord and more on the way.
 > MCP support for advanced tool integration and control.
 """
 
