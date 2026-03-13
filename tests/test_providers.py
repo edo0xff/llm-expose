@@ -29,6 +29,7 @@ class TestLiteLLMProviderInit:
         cfg = ProviderConfig(provider_name="openai", model="gpt-4o", api_key="sk-test")
         LiteLLMProvider(cfg)
         import os
+
         assert os.environ.get("OPENAI_API_KEY") == "sk-test"
 
     def test_does_not_override_existing_env_key(
@@ -38,6 +39,7 @@ class TestLiteLLMProviderInit:
         cfg = ProviderConfig(provider_name="openai", model="gpt-4o", api_key="sk-new")
         LiteLLMProvider(cfg)
         import os
+
         assert os.environ["OPENAI_API_KEY"] == "already-set"
 
     def test_supports_vision_uses_config_override(self) -> None:
@@ -167,12 +169,16 @@ class TestComplete:
     async def test_complete_passes_tools_and_tool_choice_to_litellm(self) -> None:
         cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
         provider = LiteLLMProvider(cfg)
-        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+        tools = [
+            {"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}
+        ]
 
         mock_response = MagicMock()
         mock_response.choices[0].message.content = "Tool-backed reply"
 
-        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)) as mocked_completion:
+        with patch(
+            "litellm.acompletion", new=AsyncMock(return_value=mock_response)
+        ) as mocked_completion:
             result = await provider.complete(
                 [{"role": "user", "content": "Hi"}],
                 tools=tools,
@@ -192,7 +198,9 @@ class TestComplete:
             model="llama3",
             base_url="http://localhost:1234/v1",
         )
-        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+        tools = [
+            {"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}
+        ]
 
         mock_response = MagicMock()
         mock_response.choices[0].message.content = "local tool reply"
@@ -242,7 +250,9 @@ class TestComplete:
         ]
 
         with (
-            patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)) as mocked_completion,
+            patch(
+                "litellm.acompletion", new=AsyncMock(return_value=mock_response)
+            ) as mocked_completion,
             patch("warnings.warn") as warn_mock,
         ):
             result = await provider.complete(messages)
@@ -321,7 +331,9 @@ class TestStream:
     async def test_stream_passes_tools_and_tool_choice_to_litellm(self) -> None:
         cfg = ProviderConfig(provider_name="openai", model="gpt-4o")
         provider = LiteLLMProvider(cfg)
-        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+        tools = [
+            {"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}
+        ]
 
         async def _mock_stream():
             for token in ["A", "B"]:
@@ -329,7 +341,9 @@ class TestStream:
                 chunk.choices[0].delta.content = token
                 yield chunk
 
-        with patch("litellm.acompletion", new=AsyncMock(return_value=_mock_stream())) as mocked_completion:
+        with patch(
+            "litellm.acompletion", new=AsyncMock(return_value=_mock_stream())
+        ) as mocked_completion:
             chunks = []
             async for chunk in provider.stream(
                 [{"role": "user", "content": "Hi"}],
@@ -350,7 +364,9 @@ class TestStream:
             model="llama3",
             base_url="http://localhost:1234/v1",
         )
-        tools = [{"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}]
+        tools = [
+            {"type": "mcp", "server_label": "gateway", "server_url": "litellm_proxy"}
+        ]
 
         async def _mock_stream():
             for token in ["local", "-", "tool"]:

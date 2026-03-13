@@ -7,10 +7,9 @@ import inspect
 import json
 import logging
 import uuid
-
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, cast
 
 import typer
 from rich.console import Console
@@ -20,17 +19,18 @@ from rich.table import Table
 from rich.text import Text
 from telegram.error import Conflict
 
+from llm_expose.clients.base import BaseClient
+from llm_expose.clients.discord import DiscordClient
+from llm_expose.clients.telegram import TelegramClient
 from llm_expose.config import (
     MCPServerConfig,
     ProviderConfig,
     TelegramClientConfig,
-    add_pair as add_channel_pair,
     delete_channel,
-    delete_pair as delete_channel_pair,
     delete_mcp_server,
     delete_model,
-    get_pairs_for_channel,
     get_mcp_server,
+    get_pairs_for_channel,
     list_channels,
     list_mcp_servers,
     list_models,
@@ -43,6 +43,12 @@ from llm_expose.config import (
     save_mcp_server,
     save_model,
 )
+from llm_expose.config import (
+    add_pair as add_channel_pair,
+)
+from llm_expose.config import (
+    delete_pair as delete_channel_pair,
+)
 from llm_expose.config.models import DiscordClientConfig, ExposureConfig
 from llm_expose.core.builtin_mcp import ToolExecutionContext
 from llm_expose.core.content_parts import (
@@ -53,9 +59,6 @@ from llm_expose.core.content_parts import (
 from llm_expose.core.orchestrator import Orchestrator
 from llm_expose.core.tool_aware_completion import ToolAwareCompletion
 from llm_expose.providers.litellm_provider import LiteLLMProvider
-from llm_expose.clients.telegram import TelegramClient
-from llm_expose.clients.discord import DiscordClient
-from llm_expose.clients.base import BaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +75,9 @@ app = typer.Typer(
 
 # Subcommands for 'add' and 'delete'
 add_app = typer.Typer(help="Add model, channel, pairs, or MCP server configurations")
-delete_app = typer.Typer(help="Delete model, channel, pairs, or MCP server configurations")
+delete_app = typer.Typer(
+    help="Delete model, channel, pairs, or MCP server configurations"
+)
 list_app = typer.Typer(help="List saved models, channels, pairs, or MCP servers")
 
 app.add_typer(add_app, name="add")
@@ -106,6 +111,7 @@ _BANNER = r"""
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _print_banner() -> None:
     """Display the welcome banner."""
     console.print(Panel(Text(_BANNER, style="bold cyan"), border_style="cyan"))
@@ -130,7 +136,9 @@ def _select_from_list(prompt: str, options: list[str]) -> str:
             choice = int(raw)
             if 1 <= choice <= len(options):
                 return options[choice - 1]
-        console.print("[red]  Invalid selection. Please enter a number from the list.[/red]")
+        console.print(
+            "[red]  Invalid selection. Please enter a number from the list.[/red]"
+        )
 
 
 def _parse_multi_select_numbers(raw: str) -> list[int] | None:
@@ -155,7 +163,9 @@ def _parse_multi_select_numbers(raw: str) -> list[int] | None:
 def _select_mcp_servers_for_channel(options: list[str]) -> list[str]:
     """Select one or many MCP servers to attach to a channel."""
     if not options:
-        console.print("\n[yellow]No MCP servers configured. This channel will start with none attached.[/yellow]")
+        console.print(
+            "\n[yellow]No MCP servers configured. This channel will start with none attached.[/yellow]"
+        )
         return []
 
     all_index = len(options) + 1
@@ -171,7 +181,9 @@ def _select_mcp_servers_for_channel(options: list[str]) -> list[str]:
         raw = Prompt.ask("  Enter number(s), comma-separated")
         selected_indexes = _parse_multi_select_numbers(raw)
         if selected_indexes is None:
-            console.print("[red]  Invalid input. Use numbers separated by commas (example: 1,3).[/red]")
+            console.print(
+                "[red]  Invalid input. Use numbers separated by commas (example: 1,3).[/red]"
+            )
             continue
 
         if all_index in selected_indexes and len(selected_indexes) == 1:
@@ -179,17 +191,23 @@ def _select_mcp_servers_for_channel(options: list[str]) -> list[str]:
         if none_index in selected_indexes and len(selected_indexes) == 1:
             return []
         if all_index in selected_indexes or none_index in selected_indexes:
-            console.print("[red]  'Select all' and 'Select none' must be used alone.[/red]")
+            console.print(
+                "[red]  'Select all' and 'Select none' must be used alone.[/red]"
+            )
             continue
 
         if any(index < 1 or index > len(options) for index in selected_indexes):
-            console.print("[red]  Invalid selection. Please pick numbers from the list.[/red]")
+            console.print(
+                "[red]  Invalid selection. Please pick numbers from the list.[/red]"
+            )
             continue
 
         return [options[index - 1] for index in selected_indexes]
 
 
-def _resolve_channel_name_for_pairs(channel_name: Optional[str], *, no_input: bool = False) -> str:
+def _resolve_channel_name_for_pairs(
+    channel_name: str | None, *, no_input: bool = False
+) -> str:
     """Resolve the channel config name used for pair CRUD commands."""
     channels = list_channels()
     if not channels:
@@ -218,13 +236,31 @@ def _resolve_channel_name_for_pairs(channel_name: Optional[str], *, no_input: bo
 
 @add_app.command("model")
 def add_model(
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Config name for this model"),
-    provider: Optional[str] = typer.Option(None, "--provider", help="Provider type: 'local' or online provider name (e.g. 'openai')"),
-    model_id: Optional[str] = typer.Option(None, "--model-id", help="Model identifier (e.g. gpt-4o-mini or a local model name)"),
-    base_url: Optional[str] = typer.Option(None, "--base-url", help="Base URL for local/OpenAI-compatible servers"),
-    api_key: Optional[str] = typer.Option(None, "--api-key", help="API key for the provider"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm overwrite without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    name: str | None = typer.Option(
+        None, "--name", "-n", help="Config name for this model"
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Provider type: 'local' or online provider name (e.g. 'openai')",
+    ),
+    model_id: str | None = typer.Option(
+        None,
+        "--model-id",
+        help="Model identifier (e.g. gpt-4o-mini or a local model name)",
+    ),
+    base_url: str | None = typer.Option(
+        None, "--base-url", help="Base URL for local/OpenAI-compatible servers"
+    ),
+    api_key: str | None = typer.Option(
+        None, "--api-key", help="API key for the provider"
+    ),
+    yes: bool = typer.Option(
+        False, "-y", "--yes", help="Confirm overwrite without prompt"
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Add a new model (LLM provider) configuration.
 
@@ -254,9 +290,13 @@ def add_model(
         if yes:
             pass  # proceed silently
         elif no_input:
-            console.print(f"[red]Error: Model '{name}' already exists. Use -y to overwrite.[/red]")
+            console.print(
+                f"[red]Error: Model '{name}' already exists. Use -y to overwrite.[/red]"
+            )
             raise typer.Exit(code=1)
-        elif not Confirm.ask(f"[yellow]Model '{name}' already exists. Overwrite?[/yellow]", default=False):
+        elif not Confirm.ask(
+            f"[yellow]Model '{name}' already exists. Overwrite?[/yellow]", default=False
+        ):
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit()
 
@@ -284,12 +324,17 @@ def add_model(
             # Use the interactive selector only if provider not supplied via flag
             provider_type = _select_from_list(
                 "Select LLM provider type:",
-                ["Local (LM Studio / Ollama / vLLM / OpenAI-compatible)", "Online (LiteLLM-supported)"],
+                [
+                    "Local (LM Studio / Ollama / vLLM / OpenAI-compatible)",
+                    "Online (LiteLLM-supported)",
+                ],
             )
         else:
             provider_type = "Local" if provider == "local" else "Online"
 
-        if provider_type.startswith("Online") or (provider is not None and provider != "local"):
+        if provider_type.startswith("Online") or (
+            provider is not None and provider != "local"
+        ):
             from litellm import model_cost
 
             models_by_provider: dict[str, list[str]] = {}
@@ -303,9 +348,19 @@ def add_model(
                     continue
 
                 model_supports = []
-                model_supports += ["[green]tools[/green]"] if value.get("supports_function_calling", False) else []
-                model_supports += ["[yellow]vision[/yellow]"] if value.get("supports_vision", False) else []
-                model_supports_str = f" ({', '.join(model_supports)})" if model_supports else ""
+                model_supports += (
+                    ["[green]tools[/green]"]
+                    if value.get("supports_function_calling", False)
+                    else []
+                )
+                model_supports += (
+                    ["[yellow]vision[/yellow]"]
+                    if value.get("supports_vision", False)
+                    else []
+                )
+                model_supports_str = (
+                    f" ({', '.join(model_supports)})" if model_supports else ""
+                )
 
                 if _provider not in models_by_provider:
                     models_by_provider[_provider] = []
@@ -350,16 +405,21 @@ def add_model(
                 model = Prompt.ask(f"  Model name for [cyan]{provider_name}[/cyan]")
 
     # ---- API key -------------------------------------------------------
-    resolved_api_key: Optional[str] = api_key
+    resolved_api_key: str | None = api_key
     if provider_name != "local" and not no_input:
         from litellm import validate_environment
+
         auth_requirements = validate_environment(model)
         if not auth_requirements["keys_in_environment"] and resolved_api_key is None:
             while not resolved_api_key:
-                raw_key = Prompt.ask(f"  API key for {provider_name} (will be set as environment variable for this provider)")
+                raw_key = Prompt.ask(
+                    f"  API key for {provider_name} (will be set as environment variable for this provider)"
+                )
                 resolved_api_key = raw_key.strip() or None
                 if not resolved_api_key:
-                    console.print("[red]  API key cannot be empty. Please try again.[/red]")
+                    console.print(
+                        "[red]  API key cannot be empty. Please try again.[/red]"
+                    )
     elif provider_name == "local" and not no_input and resolved_api_key is None:
         raw_key = Prompt.ask(
             f"  Optional API key for {provider_name} (some local servers require an API key even if they ignore the value)",
@@ -388,18 +448,30 @@ def add_model(
 
 @add_app.command("channel")
 def add_channel(
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Config name for this channel"),
-    bot_token: Optional[str] = typer.Option(None, "--bot-token", help="Client bot token"),
-    client_type: Optional[str] = typer.Option(
+    name: str | None = typer.Option(
+        None, "--name", "-n", help="Config name for this channel"
+    ),
+    bot_token: str | None = typer.Option(None, "--bot-token", help="Client bot token"),
+    client_type: str | None = typer.Option(
         None,
         "--client-type",
         help="Client type: telegram or discord",
     ),
-    model_name: Optional[str] = typer.Option(None, "--model-name", help="Model config name to use for LLM completion"),
-    mcp_server: list[str] = typer.Option([], "--mcp-server", help="MCP server name to attach (repeatable)"),
-    system_prompt_path: Optional[str] = typer.Option(None, "--system-prompt-path", help="Path to system prompt text file"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm overwrite without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    model_name: str | None = typer.Option(
+        None, "--model-name", help="Model config name to use for LLM completion"
+    ),
+    mcp_server: list[str] = typer.Option(
+        [], "--mcp-server", help="MCP server name to attach (repeatable)"
+    ),
+    system_prompt_path: str | None = typer.Option(
+        None, "--system-prompt-path", help="Path to system prompt text file"
+    ),
+    yes: bool = typer.Option(
+        False, "-y", "--yes", help="Confirm overwrite without prompt"
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Add a new channel (messaging client) configuration.
 
@@ -434,9 +506,14 @@ def add_channel(
         if yes:
             pass  # proceed silently
         elif no_input:
-            console.print(f"[red]Error: Channel '{name}' already exists. Use -y to overwrite.[/red]")
+            console.print(
+                f"[red]Error: Channel '{name}' already exists. Use -y to overwrite.[/red]"
+            )
             raise typer.Exit(code=1)
-        elif not Confirm.ask(f"[yellow]Channel '{name}' already exists. Overwrite?[/yellow]", default=False):
+        elif not Confirm.ask(
+            f"[yellow]Channel '{name}' already exists. Overwrite?[/yellow]",
+            default=False,
+        ):
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit()
 
@@ -448,7 +525,9 @@ def add_channel(
     if client_type is not None:
         candidate = client_type.strip().lower()
         if candidate not in {"telegram", "discord"}:
-            console.print("[red]Error: --client-type must be 'telegram' or 'discord'.[/red]")
+            console.print(
+                "[red]Error: --client-type must be 'telegram' or 'discord'.[/red]"
+            )
             raise typer.Exit(code=1)
         resolved_client_type = candidate
 
@@ -466,9 +545,13 @@ def add_channel(
         if resolved_client_type == "telegram":
             raw_bot_token = ""
             while not raw_bot_token:
-                raw_bot_token = Prompt.ask("  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])").strip()
+                raw_bot_token = Prompt.ask(
+                    "  Telegram bot token (from [link=https://t.me/BotFather]@BotFather[/link])"
+                ).strip()
                 if not raw_bot_token:
-                    console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+                    console.print(
+                        "[red]  Bot token cannot be empty. Please try again.[/red]"
+                    )
             bot_token = raw_bot_token
         else:
             console.print(
@@ -478,9 +561,13 @@ def add_channel(
             )
             raw_bot_token = ""
             while not raw_bot_token:
-                raw_bot_token = Prompt.ask("  Discord bot token (from Developer Portal)").strip()
+                raw_bot_token = Prompt.ask(
+                    "  Discord bot token (from Developer Portal)"
+                ).strip()
                 if not raw_bot_token:
-                    console.print("[red]  Bot token cannot be empty. Please try again.[/red]")
+                    console.print(
+                        "[red]  Bot token cannot be empty. Please try again.[/red]"
+                    )
             bot_token = raw_bot_token
     else:
         # Headless fallback when --client-type isn't provided.
@@ -496,10 +583,13 @@ def add_channel(
         raise typer.Exit(code=1)
 
     # ---- Model selection -------------------------------------------
-    resolved_model_name: Optional[str] = model_name
+    resolved_model_name: str | None = model_name
     if not no_input and model_name is None:
         available_models = list_models()
-        if available_models or Confirm.ask("\n[bold]Do you want to set a model for LLM completion?[/bold]", default=False):
+        if available_models or Confirm.ask(
+            "\n[bold]Do you want to set a model for LLM completion?[/bold]",
+            default=cast(Any, False),
+        ):
             if available_models:
                 model_options = available_models + ["None (skip LLM completion)"]
                 selected_model = _select_from_list(
@@ -509,7 +599,9 @@ def add_channel(
                 if selected_model != "None (skip LLM completion)":
                     resolved_model_name = selected_model
             else:
-                console.print("[yellow]No models found. Run 'llm-expose add model' first to create one.[/yellow]")
+                console.print(
+                    "[yellow]No models found. Run 'llm-expose add model' first to create one.[/yellow]"
+                )
 
     # ---- MCP servers -----------------------------------------------
     attached_mcp_servers: list[str]
@@ -519,7 +611,9 @@ def add_channel(
             known = list_mcp_servers()
             missing = [s for s in mcp_server if s not in known]
             if missing:
-                console.print(f"[red]Error: Unknown MCP server(s): {', '.join(missing)}[/red]")
+                console.print(
+                    f"[red]Error: Unknown MCP server(s): {', '.join(missing)}[/red]"
+                )
                 raise typer.Exit(code=1)
         attached_mcp_servers = list(mcp_server)
     else:
@@ -527,32 +621,44 @@ def add_channel(
         attached_mcp_servers = _select_mcp_servers_for_channel(available_mcp_servers)
 
     # ---- System prompt path ----------------------------------------
-    resolved_system_prompt_path: Optional[str] = system_prompt_path
+    resolved_system_prompt_path: str | None = system_prompt_path
     if system_prompt_path is not None:
         try:
-            with open(system_prompt_path, "r", encoding="utf-8") as f:
+            with open(system_prompt_path, encoding="utf-8") as f:
                 f.read()
         except Exception as exc:
-            console.print(f"[red]Failed to access system prompt file '{system_prompt_path}': {exc}[/red]")
+            console.print(
+                f"[red]Failed to access system prompt file '{system_prompt_path}': {exc}[/red]"
+            )
             raise typer.Exit(code=1) from exc
         if not no_input:
-            console.print("\n[green]System prompt file path configured successfully![/green]")
+            console.print(
+                "\n[green]System prompt file path configured successfully![/green]"
+            )
     elif not no_input:
-        if Confirm.ask("\n[bold]Do you want to set a custom system prompt for this channel?[/bold]", default=False):
+        if Confirm.ask(
+            "\n[bold]Do you want to set a custom system prompt for this channel?[/bold]",
+            default=False,
+        ):
             while True:
                 prompt_path = Prompt.ask("  Enter path to system prompt text file")
                 try:
-                    with open(prompt_path, "r", encoding="utf-8") as f:
+                    with open(prompt_path, encoding="utf-8") as f:
                         f.read()
                     resolved_system_prompt_path = prompt_path
                     break
                 except Exception as exc:
-                    console.print(f"[red]Failed to access system prompt file '{prompt_path}': {exc}[/red]")
+                    console.print(
+                        f"[red]Failed to access system prompt file '{prompt_path}': {exc}[/red]"
+                    )
                     if not Confirm.ask("Do you want to try again?", default=True):
                         break
             if resolved_system_prompt_path:
-                console.print("\n[green]System prompt file path configured successfully![/green]")
+                console.print(
+                    "\n[green]System prompt file path configured successfully![/green]"
+                )
 
+    client_cfg: DiscordClientConfig | TelegramClientConfig
     if resolved_client_type == "discord":
         client_cfg = DiscordClientConfig(
             bot_token=bot_token,
@@ -582,17 +688,19 @@ def add_channel(
 
 @add_app.command("pair")
 def add_pair_cmd(
-    pair_id: Optional[str] = typer.Argument(
+    pair_id: str | None = typer.Argument(
         None,
         help="Pair ID (for Telegram this is the chat ID)",
     ),
-    channel: Optional[str] = typer.Option(
+    channel: str | None = typer.Option(
         None,
         "--channel",
         "-c",
         help="Channel config name to attach this pair to",
     ),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Add a pair ID to a channel allowlist.
 
@@ -605,10 +713,14 @@ def add_pair_cmd(
     resolved_pair_id = pair_id.strip() if pair_id is not None else ""
     if not resolved_pair_id:
         if no_input:
-            console.print("[red]Error: pair_id argument is required with --no-input.[/red]")
+            console.print(
+                "[red]Error: pair_id argument is required with --no-input.[/red]"
+            )
             raise typer.Exit(code=1)
         while not resolved_pair_id:
-            resolved_pair_id = Prompt.ask("Pair ID (for Telegram this is chat.id)").strip()
+            resolved_pair_id = Prompt.ask(
+                "Pair ID (for Telegram this is chat.id)"
+            ).strip()
             if not resolved_pair_id:
                 console.print("[red]Pair ID cannot be empty.[/red]")
 
@@ -630,9 +742,13 @@ def add_pair_cmd(
 
 @delete_app.command("model")
 def delete_model_cmd(
-    name: Optional[str] = typer.Argument(None, help="Name of the model to delete"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm deletion without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    name: str | None = typer.Argument(None, help="Name of the model to delete"),
+    yes: bool = typer.Option(
+        False, "-y", "--yes", help="Confirm deletion without prompt"
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Delete a saved model configuration.
 
@@ -642,13 +758,17 @@ def delete_model_cmd(
     """
     models = list_models()
     if not models:
-        console.print("[yellow]No models found. Run [bold]llm-expose add model[/bold] to create one.[/yellow]")
+        console.print(
+            "[yellow]No models found. Run [bold]llm-expose add model[/bold] to create one.[/yellow]"
+        )
         raise typer.Exit()
 
     # Select model to delete
     if name is None:
         if no_input:
-            console.print("[red]Error: name argument is required with --no-input.[/red]")
+            console.print(
+                "[red]Error: name argument is required with --no-input.[/red]"
+            )
             raise typer.Exit(code=1)
         name = _select_from_list("Select model to delete:", models)
     elif name not in models:
@@ -662,16 +782,21 @@ def delete_model_cmd(
     elif no_input:
         console.print("[red]Error: deletion requires -y with --no-input.[/red]")
         raise typer.Exit(code=1)
-    elif not Confirm.ask(f"[bold red]Are you sure you want to delete model '{name}'?[/bold red]", default=False):
+    elif not Confirm.ask(
+        f"[bold red]Are you sure you want to delete model '{name}'?[/bold red]",
+        default=False,
+    ):
         console.print("[yellow]Deletion cancelled.[/yellow]")
         raise typer.Exit()
 
     try:
         delete_model(name)
-        console.print(f"\n[bold green]✓ Model '{name}' deleted successfully.[/bold green]\n")
+        console.print(
+            f"\n[bold green]✓ Model '{name}' deleted successfully.[/bold green]\n"
+        )
     except FileNotFoundError:
         console.print(f"[red]No model named '{name}' found.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Failed to delete model '{name}': {exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -679,9 +804,13 @@ def delete_model_cmd(
 
 @delete_app.command("channel")
 def delete_channel_cmd(
-    name: Optional[str] = typer.Argument(None, help="Name of the channel to delete"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm deletion without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    name: str | None = typer.Argument(None, help="Name of the channel to delete"),
+    yes: bool = typer.Option(
+        False, "-y", "--yes", help="Confirm deletion without prompt"
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Delete a saved channel configuration.
 
@@ -691,18 +820,24 @@ def delete_channel_cmd(
     """
     channels = list_channels()
     if not channels:
-        console.print("[yellow]No channels found. Run [bold]llm-expose add channel[/bold] to create one.[/yellow]")
+        console.print(
+            "[yellow]No channels found. Run [bold]llm-expose add channel[/bold] to create one.[/yellow]"
+        )
         raise typer.Exit()
 
     # Select channel to delete
     if name is None:
         if no_input:
-            console.print("[red]Error: name argument is required with --no-input.[/red]")
+            console.print(
+                "[red]Error: name argument is required with --no-input.[/red]"
+            )
             raise typer.Exit(code=1)
         name = _select_from_list("Select channel to delete:", channels)
     elif name not in channels:
         console.print(f"[red]No channel named '{name}' found.[/red]")
-        console.print("Run [bold]llm-expose add channel[/bold] to see available channels.")
+        console.print(
+            "Run [bold]llm-expose add channel[/bold] to see available channels."
+        )
         raise typer.Exit(code=1)
 
     # Confirm deletion
@@ -711,16 +846,21 @@ def delete_channel_cmd(
     elif no_input:
         console.print("[red]Error: deletion requires -y with --no-input.[/red]")
         raise typer.Exit(code=1)
-    elif not Confirm.ask(f"[bold red]Are you sure you want to delete channel '{name}'?[/bold red]", default=False):
+    elif not Confirm.ask(
+        f"[bold red]Are you sure you want to delete channel '{name}'?[/bold red]",
+        default=False,
+    ):
         console.print("[yellow]Deletion cancelled.[/yellow]")
         raise typer.Exit()
 
     try:
         delete_channel(name)
-        console.print(f"\n[bold green]✓ Channel '{name}' deleted successfully.[/bold green]\n")
+        console.print(
+            f"\n[bold green]✓ Channel '{name}' deleted successfully.[/bold green]\n"
+        )
     except FileNotFoundError:
         console.print(f"[red]No channel named '{name}' found.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Failed to delete channel '{name}': {exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -728,18 +868,25 @@ def delete_channel_cmd(
 
 @delete_app.command("pair")
 def delete_pair_cmd(
-    pair_id: Optional[str] = typer.Argument(
+    pair_id: str | None = typer.Argument(
         None,
         help="Pair ID to delete",
     ),
-    channel: Optional[str] = typer.Option(
+    channel: str | None = typer.Option(
         None,
         "--channel",
         "-c",
         help="Channel config name that owns this pair",
     ),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm deletion without prompt (no-op: pair delete has no confirmation prompt, kept for consistency)"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    yes: bool = typer.Option(
+        False,
+        "-y",
+        "--yes",
+        help="Confirm deletion without prompt (no-op: pair delete has no confirmation prompt, kept for consistency)",
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Delete a pair ID from a channel allowlist.
 
@@ -752,7 +899,9 @@ def delete_pair_cmd(
     resolved_pair_id = pair_id.strip() if pair_id is not None else ""
     if not resolved_pair_id:
         if no_input:
-            console.print("[red]Error: pair_id argument is required with --no-input.[/red]")
+            console.print(
+                "[red]Error: pair_id argument is required with --no-input.[/red]"
+            )
             raise typer.Exit(code=1)
         available_pairs = get_pairs_for_channel(channel_name)
         if not available_pairs:
@@ -768,7 +917,7 @@ def delete_pair_cmd(
         console.print(
             f"[red]No pair '{resolved_pair_id}' found for channel '{channel_name}'.[/red]"
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Failed to delete pair: {exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -789,7 +938,9 @@ def list_models_cmd() -> None:
     """List all saved model configurations."""
     models = list_models()
     if not models:
-        console.print("[yellow]No models found. Run [bold]llm-expose add model[/bold] to create one.[/yellow]")
+        console.print(
+            "[yellow]No models found. Run [bold]llm-expose add model[/bold] to create one.[/yellow]"
+        )
         return
 
     table = Table(title="Saved Models", border_style="cyan", show_lines=True)
@@ -803,7 +954,9 @@ def list_models_cmd() -> None:
         try:
             cfg = load_model(name)
             api_key_offuscated = cfg.api_key[:4] + "****" if cfg.api_key else "-"
-            table.add_row(str(idx), name, cfg.provider_name, cfg.model, api_key_offuscated)
+            table.add_row(
+                str(idx), name, cfg.provider_name, cfg.model, api_key_offuscated
+            )
         except Exception:
             table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
 
@@ -816,7 +969,9 @@ def list_channels_cmd() -> None:
     """List all saved channel configurations."""
     channels = list_channels()
     if not channels:
-        console.print("[yellow]No channels found. Run [bold]llm-expose add channel[/bold] to create one.[/yellow]")
+        console.print(
+            "[yellow]No channels found. Run [bold]llm-expose add channel[/bold] to create one.[/yellow]"
+        )
         return
 
     table = Table(title="Saved Channels", border_style="cyan", show_lines=True)
@@ -841,7 +996,7 @@ def list_channels_cmd() -> None:
 @list_app.command("pairs")
 @list_app.command("pair")
 def list_pairs_cmd(
-    channel: Optional[str] = typer.Option(
+    channel: str | None = typer.Option(
         None,
         "--channel",
         "-c",
@@ -931,15 +1086,39 @@ def list_mcp_cmd() -> None:
 
 @add_app.command("mcp")
 def add_mcp_cmd(
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="MCP server config name"),
-    transport: Optional[str] = typer.Option(None, "--transport", help="Transport type: stdio, sse, or http"),
-    command: Optional[str] = typer.Option(None, "--command", help="Command to run (stdio transport)"),
-    args: Optional[list[str]] = typer.Option(None, "--args", help="Command args as space-separated list (stdio): --args foo bar baz"),
-    url: Optional[str] = typer.Option(None, "--url", help="Server URL (sse/http transport)"),
-    enabled: Optional[bool] = typer.Option(None, "--enabled/--disabled", help="Enable or disable the server (default: enabled)"),
-    tool_confirmation: Optional[str] = typer.Option(None, "--tool-confirmation", help="Tool confirmation mode: default, required, or never"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm overwrite without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    name: str | None = typer.Option(
+        None, "--name", "-n", help="MCP server config name"
+    ),
+    transport: str | None = typer.Option(
+        None, "--transport", help="Transport type: stdio, sse, or http"
+    ),
+    command: str | None = typer.Option(
+        None, "--command", help="Command to run (stdio transport)"
+    ),
+    args: list[str] | None = typer.Option(
+        None,
+        "--args",
+        help="Command args as space-separated list (stdio): --args foo bar baz",
+    ),
+    url: str | None = typer.Option(
+        None, "--url", help="Server URL (sse/http transport)"
+    ),
+    enabled: bool | None = typer.Option(
+        None,
+        "--enabled/--disabled",
+        help="Enable or disable the server (default: enabled)",
+    ),
+    tool_confirmation: str | None = typer.Option(
+        None,
+        "--tool-confirmation",
+        help="Tool confirmation mode: default, required, or never",
+    ),
+    yes: bool = typer.Option(
+        False, "-y", "--yes", help="Confirm overwrite without prompt"
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Add or update an MCP server configuration.
 
@@ -971,7 +1150,9 @@ def add_mcp_cmd(
         if yes:
             pass  # proceed silently
         elif no_input:
-            console.print(f"[red]Error: MCP server '{name}' already exists. Use -y to overwrite.[/red]")
+            console.print(
+                f"[red]Error: MCP server '{name}' already exists. Use -y to overwrite.[/red]"
+            )
             raise typer.Exit(code=1)
         elif not Confirm.ask(
             f"[yellow]MCP server '{name}' already exists. Overwrite?[/yellow]",
@@ -989,46 +1170,64 @@ def add_mcp_cmd(
         transport = _select_from_list("Select MCP transport:", _valid_transports)
     transport = transport.strip().lower()
     if transport not in _valid_transports:
-        console.print(f"[red]Error: --transport must be one of: {', '.join(_valid_transports)}[/red]")
+        console.print(
+            f"[red]Error: --transport must be one of: {', '.join(_valid_transports)}[/red]"
+        )
         raise typer.Exit(code=1)
 
-    resolved_command: Optional[str] = None
+    resolved_command: str | None = None
     resolved_args: list[str] = args if args is not None else []
-    resolved_url: Optional[str] = None
+    resolved_url: str | None = None
 
     if transport == "stdio":
         # ---- Command -----------------------------------------------
         if command is None:
             if no_input:
-                console.print("[red]Error: --command is required for stdio transport with --no-input.[/red]")
+                console.print(
+                    "[red]Error: --command is required for stdio transport with --no-input.[/red]"
+                )
                 raise typer.Exit(code=1)
-            resolved_command = Prompt.ask("  Command to run (example: npx, uvx)").strip()
+            resolved_command = Prompt.ask(
+                "  Command to run (example: npx, uvx)"
+            ).strip()
             if not resolved_command:
                 console.print("[red]Command cannot be empty for stdio transport.[/red]")
                 raise typer.Exit(code=1)
         else:
             resolved_command = command.strip()
             if not resolved_command:
-                console.print("[red]--command cannot be empty for stdio transport.[/red]")
+                console.print(
+                    "[red]--command cannot be empty for stdio transport.[/red]"
+                )
                 raise typer.Exit(code=1)
         # ---- Args (interactive only if no flag given and not headless) --
         if args is None and not no_input:
-            raw_args_str = Prompt.ask("  Command args (space-separated)", default="").strip()
+            raw_args_str = Prompt.ask(
+                "  Command args (space-separated)", default=""
+            ).strip()
             resolved_args = raw_args_str.split() if raw_args_str else []
     else:
         transport_label = transport.upper()
         if url is None:
             if no_input:
-                console.print(f"[red]Error: --url is required for {transport} transport with --no-input.[/red]")
+                console.print(
+                    f"[red]Error: --url is required for {transport} transport with --no-input.[/red]"
+                )
                 raise typer.Exit(code=1)
-            resolved_url = Prompt.ask(f"  {transport_label} URL (example: http://localhost:3000/sse)").strip()
+            resolved_url = Prompt.ask(
+                f"  {transport_label} URL (example: http://localhost:3000/sse)"
+            ).strip()
             if not resolved_url:
-                console.print(f"[red]URL cannot be empty for {transport_label} transport.[/red]")
+                console.print(
+                    f"[red]URL cannot be empty for {transport_label} transport.[/red]"
+                )
                 raise typer.Exit(code=1)
         else:
             resolved_url = url.strip()
             if not resolved_url:
-                console.print(f"[red]--url cannot be empty for {transport} transport.[/red]")
+                console.print(
+                    f"[red]--url cannot be empty for {transport} transport.[/red]"
+                )
                 raise typer.Exit(code=1)
 
     # ---- Enabled ----------------------------------------------------
@@ -1036,7 +1235,9 @@ def add_mcp_cmd(
         if no_input:
             resolved_enabled = True  # default: enabled
         else:
-            resolved_enabled = Confirm.ask("  Enable this MCP server now?", default=True)
+            resolved_enabled = Confirm.ask(
+                "  Enable this MCP server now?", default=True
+            )
     else:
         resolved_enabled = enabled
 
@@ -1048,8 +1249,12 @@ def add_mcp_cmd(
         else:
             console.print("\n[bold cyan]Tool Confirmation Mode:[/bold cyan]")
             console.print("  [dim]• default: Use global confirmation setting[/dim]")
-            console.print("  [dim]• required: Always require user approval before executing tools[/dim]")
-            console.print("  [dim]• never: Always auto-execute tools without approval[/dim]\n")
+            console.print(
+                "  [dim]• required: Always require user approval before executing tools[/dim]"
+            )
+            console.print(
+                "  [dim]• never: Always auto-execute tools without approval[/dim]\n"
+            )
             resolved_tool_confirmation = _select_from_list(
                 "Select tool confirmation mode:",
                 _valid_confirmations,
@@ -1057,17 +1262,25 @@ def add_mcp_cmd(
     else:
         resolved_tool_confirmation = tool_confirmation.strip().lower()
         if resolved_tool_confirmation not in _valid_confirmations:
-            console.print(f"[red]Error: --tool-confirmation must be one of: {', '.join(_valid_confirmations)}[/red]")
+            console.print(
+                f"[red]Error: --tool-confirmation must be one of: {', '.join(_valid_confirmations)}[/red]"
+            )
             raise typer.Exit(code=1)
+
+    transport_value = cast(Literal["stdio", "sse", "http"], transport)
+    tool_confirmation_value = cast(
+        Literal["default", "required", "never"],
+        resolved_tool_confirmation,
+    )
 
     server = MCPServerConfig(
         name=name,
-        transport=transport,
+        transport=transport_value,
         command=resolved_command,
         args=resolved_args,
         url=resolved_url,
         enabled=resolved_enabled,
-        tool_confirmation=resolved_tool_confirmation,
+        tool_confirmation=tool_confirmation_value,
     )
 
     try:
@@ -1083,9 +1296,13 @@ def add_mcp_cmd(
 
 @delete_app.command("mcp")
 def delete_mcp_cmd(
-    name: Optional[str] = typer.Argument(None, help="Name of the MCP server to delete"),
-    yes: bool = typer.Option(False, "-y", "--yes", help="Confirm deletion without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    name: str | None = typer.Argument(None, help="Name of the MCP server to delete"),
+    yes: bool = typer.Option(
+        False, "-y", "--yes", help="Confirm deletion without prompt"
+    ),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Delete a configured MCP server.
 
@@ -1102,7 +1319,9 @@ def delete_mcp_cmd(
 
     if name is None:
         if no_input:
-            console.print("[red]Error: name argument is required with --no-input.[/red]")
+            console.print(
+                "[red]Error: name argument is required with --no-input.[/red]"
+            )
             raise typer.Exit(code=1)
         name = _select_from_list("Select MCP server to delete:", servers)
     elif name not in servers:
@@ -1125,12 +1344,14 @@ def delete_mcp_cmd(
         delete_mcp_server(name)
     except FileNotFoundError:
         console.print(f"[red]No MCP server named '{name}' found.[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Failed to delete MCP server '{name}': {exc}[/red]")
         raise typer.Exit(code=1) from exc
 
-    console.print(f"\n[bold green]✓ MCP server '{name}' deleted successfully.[/bold green]\n")
+    console.print(
+        f"\n[bold green]✓ MCP server '{name}' deleted successfully.[/bold green]\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1140,9 +1361,16 @@ def delete_mcp_cmd(
 
 @app.command()
 def start(
-    channel: Optional[str] = typer.Option(None, "--channel", "-c", help="Channel config name to start without selection prompt"),
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        "-c",
+        help="Channel config name to start without selection prompt",
+    ),
     yes: bool = typer.Option(False, "-y", "--yes", help="Confirm start without prompt"),
-    no_input: bool = typer.Option(False, "--no-input", help="Fail immediately if any required input is missing"),
+    no_input: bool = typer.Option(
+        False, "--no-input", help="Fail immediately if any required input is missing"
+    ),
 ) -> None:
     """Start the LLM exposure service by selecting a channel.
 
@@ -1157,7 +1385,9 @@ def start(
     # ---- Select channel -----------------------------------------------
     channels = list_channels()
     if not channels:
-        console.print("[red]No channels found. Please run [bold]llm-expose add channel[/bold] first.[/red]")
+        console.print(
+            "[red]No channels found. Please run [bold]llm-expose add channel[/bold] first.[/red]"
+        )
         raise typer.Exit(code=1)
 
     if channel is None:
@@ -1165,7 +1395,9 @@ def start(
             console.print("[red]Error: --channel is required with --no-input.[/red]")
             raise typer.Exit(code=1)
         # Show available channels in a table
-        channel_table = Table(title="Available Channels", border_style="cyan", show_lines=True)
+        channel_table = Table(
+            title="Available Channels", border_style="cyan", show_lines=True
+        )
         channel_table.add_column("#", style="dim", width=4)
         channel_table.add_column("Name", style="bold")
         channel_table.add_column("Type", style="magenta")
@@ -1175,14 +1407,12 @@ def start(
         for idx, name in enumerate(channels, start=1):
             try:
                 cfg = load_channel(name)
-                bot_token_offuscated = cfg.bot_token[:4] + "****" if cfg.bot_token else "-"
+                bot_token_offuscated = (
+                    cfg.bot_token[:4] + "****" if cfg.bot_token else "-"
+                )
                 model_display = cfg.model_name if cfg.model_name else "[dim]none[/dim]"
                 channel_table.add_row(
-                    str(idx),
-                    name,
-                    cfg.client_type,
-                    model_display,
-                    bot_token_offuscated
+                    str(idx), name, cfg.client_type, model_display, bot_token_offuscated
                 )
             except Exception:
                 channel_table.add_row(str(idx), name, "[red]error[/red]", "-", "-")
@@ -1203,8 +1433,12 @@ def start(
 
     # ---- Load model from channel -----------------------------------------------
     if not client_cfg.model_name:
-        console.print(f"[red]Error: Channel '{channel_name}' has no model configured.[/red]")
-        console.print(f"[yellow]Tip: Run [bold]llm-expose add channel {channel_name}[/bold] to set a model.[/yellow]")
+        console.print(
+            f"[red]Error: Channel '{channel_name}' has no model configured.[/red]"
+        )
+        console.print(
+            f"[yellow]Tip: Run [bold]llm-expose add channel {channel_name}[/bold] to set a model.[/yellow]"
+        )
         raise typer.Exit(code=1)
 
     model_name = client_cfg.model_name
@@ -1212,7 +1446,9 @@ def start(
         provider_cfg = load_model(model_name)
     except FileNotFoundError:
         console.print(f"[red]Error: Model '{model_name}' not found.[/red]")
-        console.print("[yellow]Tip: Run [bold]llm-expose list model[/bold] to see available models.[/yellow]")
+        console.print(
+            "[yellow]Tip: Run [bold]llm-expose list model[/bold] to see available models.[/yellow]"
+        )
         raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Failed to load model '{model_name}': {exc}[/red]")
@@ -1232,11 +1468,19 @@ def start(
         summary_table.add_row("Model ID", provider_cfg.model)
         summary_table.add_row(
             "MCP Attached",
-            ", ".join(client_cfg.mcp_servers) if client_cfg.mcp_servers else "[dim]none[/dim]",
+            (
+                ", ".join(client_cfg.mcp_servers)
+                if client_cfg.mcp_servers
+                else "[dim]none[/dim]"
+            ),
         )
         summary_table.add_row(
             "System Prompt Path",
-            client_cfg.system_prompt_path if client_cfg.system_prompt_path else "[dim]none (using default)[/dim]",
+            (
+                client_cfg.system_prompt_path
+                if client_cfg.system_prompt_path
+                else "[dim]none (using default)[/dim]"
+            ),
         )
         console.print(summary_table)
 
@@ -1251,6 +1495,7 @@ def start(
         # Check if system prompt file exists (if configured)
         if client_cfg.system_prompt_path:
             from pathlib import Path
+
             prompt_file = Path(client_cfg.system_prompt_path)
             if not prompt_file.exists():
                 console.print(
@@ -1308,7 +1553,7 @@ def message(
         "--suppress-send",
         help="Generate the model response but do not automatically send it to the user (requires --llm-completion)",
     ),
-    system_prompt_file: Optional[str] = typer.Option(
+    system_prompt_file: str | None = typer.Option(
         None,
         "--system-prompt-file",
         help="Path to custom system prompt file (overrides channel's system prompt)",
@@ -1319,7 +1564,7 @@ def message(
         "-i",
         help="Path to an image file to include in LLM input (repeatable).",
     ),
-    file: Optional[str] = typer.Option(
+    file: str | None = typer.Option(
         None,
         "--file",
         "-f",
@@ -1327,9 +1572,9 @@ def message(
     ),
 ) -> None:
     """Send a direct message to a specific user in a channel.
-    
+
     Without --llm-completion, the text is sent directly to the user.
-    
+
     With --llm-completion, the text is treated as instructions to the LLM.
     The LLM uses the channel's system prompt + your instructions to generate
     a response, which is then sent to the user (your instructions are not sent).
@@ -1339,14 +1584,14 @@ def message(
 
     With --file, the text is sent directly and then the file is sent as a
     document attachment to the same user.
-    
+
     Examples:
         llm-expose message support 12345 "System is down"
         llm-expose message alerts 67890 "CPU at 95%. Generate a brief alert." --llm-completion
         llm-expose message news 12345 "Summarize today's headlines" --llm-completion --system-prompt-file /path/to/prompt.txt
         llm-expose message ops 12345 "Draft a reply and decide later whether to send it" --llm-completion --suppress-send
         llm-expose message ops 12345 "Some file is here:" -f /path/to/file.pdf
-    
+
     This command is useful for cron jobs and scheduled notifications.
     User must be paired with the channel (run 'llm-expose add pair' if needed).
     """
@@ -1384,7 +1629,7 @@ def message(
         console.print("[red]Error: --file cannot be used with --llm-completion.[/red]")
         raise typer.Exit(code=1)
 
-    file_path: Optional[Path] = None
+    file_path: Path | None = None
     if file:
         file_path = Path(file).expanduser()
         if not file_path.exists() or not file_path.is_file():
@@ -1396,18 +1641,20 @@ def message(
         client_cfg = load_channel(channel)
     except FileNotFoundError:
         console.print(f"[red]Error: Channel '{channel}' not found.[/red]")
-        console.print("[yellow]Tip: Run 'llm-expose list channel' to see available channels.[/yellow]")
-        raise typer.Exit(code=1)
+        console.print(
+            "[yellow]Tip: Run 'llm-expose list channel' to see available channels.[/yellow]"
+        )
+        raise typer.Exit(code=1) from None
     except Exception as exc:
         console.print(f"[red]Error: Failed to load channel '{channel}': {exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     # Validate pairing: ensure user_id is paired with this channel
     try:
         paired_users = get_pairs_for_channel(channel)
     except Exception as exc:
         console.print(f"[red]Error: Failed to load pairing configuration: {exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
     if user_id not in paired_users:
         console.print(
@@ -1431,7 +1678,9 @@ def message(
         for image_path_str in image:
             image_path = Path(image_path_str).expanduser()
             if not image_path.exists() or not image_path.is_file():
-                console.print(f"[red]Error: Image file not found: {image_path_str}[/red]")
+                console.print(
+                    f"[red]Error: Image file not found: {image_path_str}[/red]"
+                )
                 raise typer.Exit(code=1)
             image_paths.append(image_path)
             image_data_urls.append(file_to_data_url(image_path))
@@ -1440,61 +1689,83 @@ def message(
     if llm_completion:
         # Validate channel has a model configured
         if not client_cfg.model_name:
-            console.print(f"[red]Error: Channel '{channel}' has no model configured.[/red]")
-            console.print(f"[yellow]Tip: Run [bold]llm-expose add channel {channel}[/bold] to set a model.[/yellow]")
+            console.print(
+                f"[red]Error: Channel '{channel}' has no model configured.[/red]"
+            )
+            console.print(
+                f"[yellow]Tip: Run [bold]llm-expose add channel {channel}[/bold] to set a model.[/yellow]"
+            )
             raise typer.Exit(code=1)
 
         # Load model configuration
         try:
             provider_cfg = load_model(client_cfg.model_name)
         except FileNotFoundError:
-            console.print(f"[red]Error: Model '{client_cfg.model_name}' not found.[/red]")
-            console.print("[yellow]Tip: Run 'llm-expose list model' to see available models.[/yellow]")
-            raise typer.Exit(code=1)
+            console.print(
+                f"[red]Error: Model '{client_cfg.model_name}' not found.[/red]"
+            )
+            console.print(
+                "[yellow]Tip: Run 'llm-expose list model' to see available models.[/yellow]"
+            )
+            raise typer.Exit(code=1) from None
         except Exception as exc:
-            console.print(f"[red]Error: Failed to load model '{client_cfg.model_name}': {exc}[/red]")
-            raise typer.Exit(code=1)
+            console.print(
+                f"[red]Error: Failed to load model '{client_cfg.model_name}': {exc}[/red]"
+            )
+            raise typer.Exit(code=1) from None
 
         # Determine system prompt (override or channel's)
-        system_prompt: Optional[str] = None
-        
+        system_prompt: str | None = None
+
         # First try the override file if provided
         if system_prompt_file:
             try:
-                with open(system_prompt_file, "r", encoding="utf-8") as f:
+                with open(system_prompt_file, encoding="utf-8") as f:
                     system_prompt = f.read()
                 if not system_prompt.strip():
                     console.print("[red]Error: System prompt file is empty.[/red]")
                     raise typer.Exit(code=1)
             except FileNotFoundError:
-                console.print(f"[red]Error: System prompt file '{system_prompt_file}' not found.[/red]")
-                raise typer.Exit(code=1)
+                console.print(
+                    f"[red]Error: System prompt file '{system_prompt_file}' not found.[/red]"
+                )
+                raise typer.Exit(code=1) from None
             except Exception as exc:
-                console.print(f"[red]Error: Failed to read system prompt file: {exc}[/red]")
-                raise typer.Exit(code=1)
+                console.print(
+                    f"[red]Error: Failed to read system prompt file: {exc}[/red]"
+                )
+                raise typer.Exit(code=1) from None
         # Otherwise try the channel's configured prompt path
         elif client_cfg.system_prompt_path:
             try:
-                with open(client_cfg.system_prompt_path, "r", encoding="utf-8") as f:
+                with open(client_cfg.system_prompt_path, encoding="utf-8") as f:
                     system_prompt = f.read()
                 if not system_prompt.strip():
-                    console.print("[red]Error: Channel's system prompt file is empty.[/red]")
+                    console.print(
+                        "[red]Error: Channel's system prompt file is empty.[/red]"
+                    )
                     raise typer.Exit(code=1)
             except FileNotFoundError:
-                console.print(f"[red]Error: Channel's system prompt file '{client_cfg.system_prompt_path}' not found.[/red]")
-                raise typer.Exit(code=1)
+                console.print(
+                    f"[red]Error: Channel's system prompt file '{client_cfg.system_prompt_path}' not found.[/red]"
+                )
+                raise typer.Exit(code=1) from None
             except Exception as exc:
-                console.print(f"[red]Error: Failed to read channel's system prompt file: {exc}[/red]")
-                raise typer.Exit(code=1)
+                console.print(
+                    f"[red]Error: Failed to read channel's system prompt file: {exc}[/red]"
+                )
+                raise typer.Exit(code=1) from None
 
         # Use default system prompt if none provided
         if not system_prompt:
-            system_prompt = "You are a helpful assistant. Respond concisely and professionally."
+            system_prompt = (
+                "You are a helpful assistant. Respond concisely and professionally."
+            )
 
         # Call LLM to generate response
         try:
             provider = LiteLLMProvider(provider_cfg)
-            
+
             # Check if MCP servers are configured for tool-aware completion
             if client_cfg.mcp_servers:
                 # Tool-aware completion with MCP
@@ -1506,7 +1777,9 @@ def message(
                     invocation_attachments: list[dict[str, Any]] = []
                     for image_path in image_paths:
                         attachment_ref = f"att_{uuid.uuid4().hex}"
-                        attachment_paths_by_ref[attachment_ref] = str(image_path.resolve())
+                        attachment_paths_by_ref[attachment_ref] = str(
+                            image_path.resolve()
+                        )
                         invocation_attachments.append(
                             build_local_attachment_descriptor(
                                 image_path,
@@ -1518,9 +1791,13 @@ def message(
                     # --suppress-send only disables the CLI's final auto-delivery.
                     # Tool calls still require a sender to execute explicit send actions.
                     if client_cfg.client_type == "discord":
-                        tool_sender: BaseClient = DiscordClient(client_cfg, handler=_placeholder_handler)  # type: ignore[arg-type]
+                        tool_sender: BaseClient = DiscordClient(
+                            client_cfg, handler=_placeholder_handler
+                        )
                     else:
-                        tool_sender = TelegramClient(client_cfg, handler=_placeholder_handler)
+                        tool_sender = TelegramClient(
+                            client_cfg, handler=_placeholder_handler
+                        )
                     execution_context = ToolExecutionContext(
                         execution_mode="one-shot",
                         channel_id=user_id,
@@ -1532,6 +1809,7 @@ def message(
                         attachment_paths_by_ref=attachment_paths_by_ref,
                         sender=tool_sender,
                     )
+
                     async def _tool_aware_complete():
                         async with ToolAwareCompletion(
                             provider=provider,
@@ -1546,11 +1824,14 @@ def message(
                                 ],
                                 execution_context=execution_context,
                             )
+
                     llm_response_text = asyncio.run(_tool_aware_complete())
                 except Exception as exc:
-                    console.print(f"[red]Error: Tool-aware completion failed: {exc}[/red]")
+                    console.print(
+                        f"[red]Error: Tool-aware completion failed: {exc}[/red]"
+                    )
                     logger.exception("Tool-aware completion error")
-                    raise typer.Exit(code=1)
+                    raise typer.Exit(code=1) from None
             else:
                 # Simple completion without tools
                 user_content = build_user_content(text, image_urls=image_data_urls)
@@ -1562,7 +1843,7 @@ def message(
                         ]
                     )
                 )
-            
+
             llm_model_used = client_cfg.model_name
             final_message = llm_response_text
             logger.info(
@@ -1574,7 +1855,7 @@ def message(
         except Exception as exc:
             console.print(f"[red]Error: LLM failed to generate response: {exc}[/red]")
             logger.exception("LLM completion error")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from None
     elif system_prompt_file:
         # Warn if system_prompt_file is provided without --llm-completion
         console.print(
@@ -1588,7 +1869,7 @@ def message(
     # Create client instance and send message unless auto-delivery is suppressed
     try:
         if suppress_send:
-            result = {
+            result: dict[str, Any] = {
                 "status": "suppressed",
                 "channel": channel,
                 "user_id": user_id,
@@ -1597,7 +1878,9 @@ def message(
         else:
             # Client requires a handler, but send_message() doesn't use it
             if client_cfg.client_type == "discord":
-                client: BaseClient = DiscordClient(client_cfg, handler=_placeholder_handler)  # type: ignore[arg-type]
+                client: BaseClient = DiscordClient(
+                    client_cfg, handler=_placeholder_handler
+                )
             else:
                 client = TelegramClient(client_cfg, handler=_placeholder_handler)
 
@@ -1610,7 +1893,9 @@ def message(
                     send_result["file_reference"] = file_result
 
                 if llm_completion and image_data_urls:
-                    image_result = await client.send_images(user_id, image_data_urls[:1])
+                    image_result = await client.send_images(
+                        user_id, image_data_urls[:1]
+                    )
                     send_result["image_reference"] = image_result
 
                 return send_result
@@ -1622,19 +1907,19 @@ def message(
                 # In tests, asyncio.run may be mocked and not await the coroutine.
                 if inspect.iscoroutine(send_coro) and send_coro.cr_frame is not None:
                     send_coro.close()
-        
+
         # Extend result with LLM metadata if applicable
         if llm_completion and llm_response_text:
             result["llm_response"] = llm_response_text
             result["llm_model"] = llm_model_used
-        
+
         # Output result as JSON for cron integration
         console.print(json.dumps(result, indent=2))
-        
+
     except Exception as exc:
         console.print(f"[red]Error: Failed to send message: {exc}[/red]")
         logger.exception("Message send error")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
 
 
 # ---------------------------------------------------------------------------
@@ -1655,7 +1940,7 @@ def _start_service(config: ExposureConfig) -> None:
 
     provider = LiteLLMProvider(config.provider)
     if config.client.client_type == "discord":
-        client: BaseClient = DiscordClient(config.client, handler=_placeholder_handler)  # type: ignore[arg-type]
+        client: BaseClient = DiscordClient(config.client, handler=_placeholder_handler)
     else:
         client = TelegramClient(config.client, handler=_placeholder_handler)
     orchestrator = Orchestrator(config=config, provider=provider, client=client)
@@ -1673,12 +1958,14 @@ def _start_service(config: ExposureConfig) -> None:
             "polling updates for this bot token.\n"
             "Stop other running instances (or webhook consumers) and try again."
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from None
     except KeyboardInterrupt:
         console.print("\n[yellow]Service stopped by user.[/yellow]")
 
 
-async def _placeholder_handler(channel_id: str, message: str) -> str:  # pragma: no cover
+async def _placeholder_handler(
+    channel_id: str, message: str
+) -> str:  # pragma: no cover
     """Placeholder; the orchestrator replaces this before the first call."""
     return message
 

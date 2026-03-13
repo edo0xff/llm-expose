@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Callable, Coroutine, Any
+from typing import Any
+
 
 @dataclass
 class MessageResponse:
     """Structured response that can include approval metadata for interactive UI.
-    
+
     Attributes:
         content: The text message to display to the user.
         images: Optional list of image URLs/data URLs to send as references.
@@ -17,6 +19,7 @@ class MessageResponse:
         tool_names: Optional list of tool names requiring approval.
         server_names: Optional mapping of tool names to server names.
     """
+
     content: str
     images: list[str] | None = None
     approval_id: str | None = None

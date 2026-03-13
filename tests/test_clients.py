@@ -23,7 +23,6 @@ from llm_expose.config.models import (
 )
 from llm_expose.core.orchestrator import Orchestrator
 
-
 # ---------------------------------------------------------------------------
 # BaseClient
 # ---------------------------------------------------------------------------
@@ -76,6 +75,7 @@ class TestTelegramClientHandlers:
     @pytest.mark.asyncio
     async def test_handle_command_routes_start_to_orchestrator(self) -> None:
         cfg = TelegramClientConfig(bot_token="123:tok")
+
         class Orchestrator:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, str, list[str]]] = []
@@ -125,7 +125,9 @@ class TestTelegramClientHandlers:
         )
 
     @pytest.mark.asyncio
-    async def test_handle_message_retries_plain_text_on_markdown_parse_error(self) -> None:
+    async def test_handle_message_retries_plain_text_on_markdown_parse_error(
+        self,
+    ) -> None:
         cfg = TelegramClientConfig(bot_token="123:tok")
         handler = AsyncMock(return_value="broken *markdown")
         client = TelegramClient(cfg, handler=handler)
@@ -233,10 +235,14 @@ class TestTelegramClientHandlers:
         assert isinstance(message_content, list)
         assert message_content[0]["type"] == "text"
         assert message_content[1]["type"] == "image_url"
-        assert message_content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+        assert message_content[1]["image_url"]["url"].startswith(
+            "data:image/jpeg;base64,"
+        )
 
     @pytest.mark.asyncio
-    async def test_handle_message_sends_reference_image_from_structured_reply(self) -> None:
+    async def test_handle_message_sends_reference_image_from_structured_reply(
+        self,
+    ) -> None:
         cfg = TelegramClientConfig(bot_token="123:tok")
         handler = AsyncMock(
             return_value=MessageResponse(
@@ -254,7 +260,9 @@ class TestTelegramClientHandlers:
 
         await client._handle_message(update, context)
 
-        update.message.reply_text.assert_called_once_with("LLM reply", parse_mode="MarkdownV2")
+        update.message.reply_text.assert_called_once_with(
+            "LLM reply", parse_mode="MarkdownV2"
+        )
         context.bot.send_photo.assert_awaited_once_with(
             chat_id="42",
             photo="https://example.com/reference.jpg",
@@ -388,7 +396,9 @@ class TestDiscordClient:
         channel.send.assert_awaited_once_with("LLM reply")
 
     @pytest.mark.asyncio
-    async def test_on_message_logs_skip_for_empty_payload(self, caplog: pytest.LogCaptureFixture) -> None:
+    async def test_on_message_logs_skip_for_empty_payload(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         cfg = DiscordClientConfig(bot_token="discord-token")
         handler = AsyncMock(return_value="LLM reply")
         client = DiscordClient(cfg, handler=handler)
@@ -406,7 +416,10 @@ class TestDiscordClient:
             await client._on_message(msg)
 
         handler.assert_not_awaited()
-        assert "Skipping Discord message with no text and no image attachments" in caplog.text
+        assert (
+            "Skipping Discord message with no text and no image attachments"
+            in caplog.text
+        )
 
     @pytest.mark.asyncio
     async def test_send_message_chunks_long_text(self) -> None:
@@ -439,7 +452,9 @@ class TestDiscordClient:
         client._get_channel = AsyncMock(return_value=channel)  # type: ignore[method-assign]
         client._bot = MagicMock()
 
-        await client.notify_tool_status("42", "running", "tool.search", approval_id="abc123")
+        await client.notify_tool_status(
+            "42", "running", "tool.search", approval_id="abc123"
+        )
 
         message.edit.assert_awaited_once()
 
@@ -501,7 +516,9 @@ class TestOrchestrator:
         client = MagicMock()
         client.start = AsyncMock()
         client.stop = AsyncMock()
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()):
+        with patch(
+            "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+        ):
             orch = Orchestrator(config=config, provider=provider, client=client)
         return orch, provider, client
 
@@ -537,15 +554,23 @@ class TestOrchestrator:
         assert "Usage: no provider metrics yet" in status
 
     @pytest.mark.asyncio
-    async def test_handle_message_does_not_echo_input_images_as_references(self) -> None:
+    async def test_handle_message_does_not_echo_input_images_as_references(
+        self,
+    ) -> None:
         orch, _, _ = self._make_orchestrator()
         reply = await orch._handle_message(
             "42",
             "Analyze image",
             message_content=[
                 {"type": "text", "text": "Analyze image"},
-                {"type": "image_url", "image_url": {"url": "https://example.com/one.jpg"}},
-                {"type": "image_url", "image_url": {"url": "https://example.com/two.jpg"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/one.jpg"},
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/two.jpg"},
+                },
             ],
         )
 
@@ -563,8 +588,14 @@ class TestOrchestrator:
         provider.complete = AsyncMock(return_value="The answer is 42.")
         client = MagicMock()
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["100"]
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                return_value=["100"],
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
             reply = await orch._handle_message("42", "Hello")
@@ -584,8 +615,14 @@ class TestOrchestrator:
         provider.complete = AsyncMock(return_value="The answer is 42.")
         client = MagicMock()
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["100"]
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                return_value=["100"],
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
             reply = await orch.handle_admin_command("42", "start", [])
@@ -604,8 +641,14 @@ class TestOrchestrator:
         provider.complete = AsyncMock(return_value="The answer is 42.")
         client = MagicMock()
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                return_value=["42"],
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
             first = await orch.handle_admin_command("42", "start", [])
@@ -655,14 +698,21 @@ class TestOrchestrator:
 
         channel_pairs: list[str] = []
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.get_pairs_for_channel",
-            side_effect=lambda channel_name: list(channel_pairs),
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                side_effect=lambda channel_name: list(channel_pairs),
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
             blocked = await orch._handle_message("42", "Hello")
-            assert blocked == "This instance is not paired. Run `llm-expose add pair 42`"
+            assert (
+                blocked == "This instance is not paired. Run `llm-expose add pair 42`"
+            )
             provider.complete.assert_not_awaited()
 
             channel_pairs.append("42")
@@ -685,9 +735,14 @@ class TestOrchestrator:
 
         channel_pairs = ["42"]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.get_pairs_for_channel",
-            side_effect=lambda channel_name: list(channel_pairs),
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                side_effect=lambda channel_name: list(channel_pairs),
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
@@ -698,7 +753,9 @@ class TestOrchestrator:
             channel_pairs.clear()
 
             blocked = await orch._handle_message("42", "Hello after removal")
-            assert blocked == "This instance is not paired. Run `llm-expose add pair 42`"
+            assert (
+                blocked == "This instance is not paired. Run `llm-expose add pair 42`"
+            )
             assert provider.complete.await_count == 1
 
     @pytest.mark.asyncio
@@ -713,8 +770,14 @@ class TestOrchestrator:
         provider.complete = AsyncMock(return_value="The answer is 42.")
         client = MagicMock()
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                return_value=["42"],
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
             reply = await orch._handle_message("42", "Hello")
@@ -737,12 +800,14 @@ class TestOrchestrator:
     def test_orchestrator_uses_channel_system_prompt(self) -> None:
         import tempfile
         from pathlib import Path
-        
+
         # Create a temporary prompt file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as f:
             f.write("You are specialized for this channel.")
             temp_prompt_path = f.name
-        
+
         try:
             config = ExposureConfig(
                 name="test",
@@ -755,10 +820,14 @@ class TestOrchestrator:
             provider = MagicMock()
             client = MagicMock()
 
-            with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()):
+            with patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ):
                 orch = Orchestrator(config=config, provider=provider, client=client)
 
-            assert orch._history[0]["content"] == "You are specialized for this channel."
+            assert (
+                orch._history[0]["content"] == "You are specialized for this channel."
+            )
         finally:
             # Clean up temporary file
             Path(temp_prompt_path).unlink()
@@ -802,7 +871,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["remote-mcp"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="MCP reply")
@@ -855,9 +926,19 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
-        ), patch("llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]):
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                return_value=["42"],
+            ),
+        ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         reply = await orch._handle_message("Use MCP")
@@ -872,7 +953,9 @@ class TestOrchestrator:
             name="test",
             channel_name="support",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["builtin-core"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["builtin-core"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="fallback")
@@ -912,7 +995,9 @@ class TestOrchestrator:
         fake_runtime = MagicMock()
         fake_runtime.initialize = AsyncMock()
         fake_runtime.shutdown = AsyncMock()
-        fake_runtime.execute_tool_call = AsyncMock(return_value=json.dumps({"channel_id": "42"}))
+        fake_runtime.execute_tool_call = AsyncMock(
+            return_value=json.dumps({"channel_id": "42"})
+        )
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -924,9 +1009,19 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
-        ), patch("llm_expose.core.orchestrator.get_pairs_for_channel", return_value=["42"]):
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
+            patch(
+                "llm_expose.core.orchestrator.get_pairs_for_channel",
+                return_value=["42"],
+            ),
+        ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
             reply = await orch._handle_message(
@@ -954,7 +1049,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["remote-mcp"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="fallback")
@@ -1011,8 +1108,14 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
@@ -1036,7 +1139,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["missing-url"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["missing-url"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="No tools reply")
@@ -1081,12 +1186,14 @@ class TestOrchestrator:
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
         fake_runtime.get_tool_server_name = MagicMock(return_value="missing-url")
-        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
-            name="missing-url",
-            transport="stdio",
-            command="npx",
-            tool_confirmation="default",
-        ))
+        fake_runtime.get_server_config = MagicMock(
+            return_value=MCPServerConfig(
+                name="missing-url",
+                transport="stdio",
+                command="npx",
+                tool_confirmation="default",
+            )
+        )
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -1098,8 +1205,14 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
@@ -1114,7 +1227,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["remote-mcp"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="fallback")
@@ -1157,12 +1272,14 @@ class TestOrchestrator:
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
         fake_runtime.get_tool_server_name = MagicMock(return_value="remote-mcp")
-        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
-            name="remote-mcp",
-            transport="sse",
-            url="https://mcp.example.com/sse",
-            tool_confirmation="default",
-        ))
+        fake_runtime.get_server_config = MagicMock(
+            return_value=MCPServerConfig(
+                name="remote-mcp",
+                transport="sse",
+                url="https://mcp.example.com/sse",
+                tool_confirmation="default",
+            )
+        )
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -1174,8 +1291,14 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
@@ -1194,7 +1317,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["remote-mcp"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="rejection handled")
@@ -1234,12 +1359,14 @@ class TestOrchestrator:
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
         fake_runtime.get_tool_server_name = MagicMock(return_value="remote-mcp")
-        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
-            name="remote-mcp",
-            transport="sse",
-            url="https://mcp.example.com/sse",
-            tool_confirmation="default",
-        ))
+        fake_runtime.get_server_config = MagicMock(
+            return_value=MCPServerConfig(
+                name="remote-mcp",
+                transport="sse",
+                url="https://mcp.example.com/sse",
+                tool_confirmation="default",
+            )
+        )
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -1251,8 +1378,14 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
@@ -1270,7 +1403,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["remote-mcp"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["remote-mcp"]
+            ),
         )
         provider = MagicMock()
         provider.complete = AsyncMock(return_value="fallback")
@@ -1282,7 +1417,10 @@ class TestOrchestrator:
                     {
                         "id": "call_4",
                         "type": "function",
-                        "function": {"name": "mcp_server__search_docs", "arguments": "{}"},
+                        "function": {
+                            "name": "mcp_server__search_docs",
+                            "arguments": "{}",
+                        },
                     }
                 ],
             }
@@ -1306,12 +1444,14 @@ class TestOrchestrator:
         fake_runtime.shutdown = AsyncMock()
         fake_runtime.execute_tool_call = AsyncMock(return_value="tool result")
         fake_runtime.get_tool_server_name = MagicMock(return_value="remote-mcp")
-        fake_runtime.get_server_config = MagicMock(return_value=MCPServerConfig(
-            name="remote-mcp",
-            transport="sse",
-            url="https://mcp.example.com/sse",
-            tool_confirmation="default",
-        ))
+        fake_runtime.get_server_config = MagicMock(
+            return_value=MCPServerConfig(
+                name="remote-mcp",
+                transport="sse",
+                url="https://mcp.example.com/sse",
+                tool_confirmation="default",
+            )
+        )
         fake_runtime.tools = [
             {
                 "type": "function",
@@ -1323,8 +1463,14 @@ class TestOrchestrator:
             }
         ]
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager", return_value=fake_runtime
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch(
+                "llm_expose.core.orchestrator.MCPRuntimeManager",
+                return_value=fake_runtime,
+            ),
         ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
@@ -1332,7 +1478,9 @@ class TestOrchestrator:
         blocked = await orch._handle_message("42", "another question")
         assert "waiting for confirmation" in blocked
 
-    def test_orchestrator_does_not_create_runtime_without_channel_attachments(self) -> None:
+    def test_orchestrator_does_not_create_runtime_without_channel_attachments(
+        self,
+    ) -> None:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
@@ -1351,9 +1499,12 @@ class TestOrchestrator:
             ]
         )
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager"
-        ) as runtime_cls:
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=mcp_config
+            ),
+            patch("llm_expose.core.orchestrator.MCPRuntimeManager") as runtime_cls,
+        ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         assert orch._mcp_runtime is None
@@ -1368,7 +1519,9 @@ class TestOrchestrator:
         config = ExposureConfig(
             name="test",
             provider=ProviderConfig(provider_name="openai", model="gpt-4o"),
-            client=TelegramClientConfig(bot_token="123:tok", mcp_servers=["builtin-core"]),
+            client=TelegramClientConfig(
+                bot_token="123:tok", mcp_servers=["builtin-core"]
+            ),
         )
         provider = MagicMock()
         client = MagicMock()
@@ -1386,7 +1539,9 @@ class TestOrchestrator:
         assert [server.name for server in runtime_config.servers] == ["builtin-core"]
         assert runtime_config.servers[0].transport == "builtin"
 
-    def test_orchestrator_warns_for_missing_attached_mcp_servers(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_orchestrator_warns_for_missing_attached_mcp_servers(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         caplog.set_level(logging.WARNING, logger="llm_expose.core.orchestrator")
         config = ExposureConfig(
             name="test",
@@ -1396,9 +1551,12 @@ class TestOrchestrator:
         provider = MagicMock()
         client = MagicMock()
 
-        with patch("llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()), patch(
-            "llm_expose.core.orchestrator.MCPRuntimeManager"
-        ) as runtime_cls:
+        with (
+            patch(
+                "llm_expose.core.orchestrator.load_mcp_config", return_value=MCPConfig()
+            ),
+            patch("llm_expose.core.orchestrator.MCPRuntimeManager") as runtime_cls,
+        ):
             orch = Orchestrator(config=config, provider=provider, client=client)
 
         assert orch._mcp_runtime is None

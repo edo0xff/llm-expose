@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 Message = dict[str, Any]
 ToolSpec = dict[str, Any]
@@ -41,7 +42,7 @@ class BaseProvider(ABC):
         """
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         *,

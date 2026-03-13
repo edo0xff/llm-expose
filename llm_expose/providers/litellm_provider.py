@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import time
 import warnings
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 import litellm
 from openai import AsyncOpenAI
@@ -35,9 +36,8 @@ class LiteLLMProvider(BaseProvider):
         if config.api_key:
             litellm.api_key = config.api_key
             # Preserve historical behavior expected by tests and local users.
-            if (
-                config.provider_name.lower() == "openai"
-                and not os.environ.get("OPENAI_API_KEY")
+            if config.provider_name.lower() == "openai" and not os.environ.get(
+                "OPENAI_API_KEY"
             ):
                 os.environ["OPENAI_API_KEY"] = config.api_key
         if self._is_local_provider():
@@ -80,7 +80,7 @@ class LiteLLMProvider(BaseProvider):
                 f"Model '{self._config.model}' does not support vision; "
                 f"skipping {stripped_count} image part(s)."
             )
-            warnings.warn(warning_message)
+            warnings.warn(warning_message, stacklevel=2)
         return normalized
 
     def _is_local_provider(self) -> bool:
@@ -140,7 +140,9 @@ class LiteLLMProvider(BaseProvider):
         except (TypeError, ValueError):
             return None
 
-    def _extract_completion_usage(self, response: Any, *, elapsed_ms: int) -> dict[str, Any] | None:
+    def _extract_completion_usage(
+        self, response: Any, *, elapsed_ms: int
+    ) -> dict[str, Any] | None:
         usage_obj = getattr(response, "usage", None)
         if usage_obj is None and isinstance(response, dict):
             usage_obj = response.get("usage")
@@ -156,21 +158,34 @@ class LiteLLMProvider(BaseProvider):
                 total_tokens = self._as_int(usage_obj.get("total_tokens"))
             else:
                 prompt_tokens = self._as_int(getattr(usage_obj, "prompt_tokens", None))
-                completion_tokens = self._as_int(getattr(usage_obj, "completion_tokens", None))
+                completion_tokens = self._as_int(
+                    getattr(usage_obj, "completion_tokens", None)
+                )
                 total_tokens = self._as_int(getattr(usage_obj, "total_tokens", None))
 
         # Compute total when provider omits it but gives partial counters.
-        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        if (
+            total_tokens is None
+            and prompt_tokens is not None
+            and completion_tokens is not None
+        ):
             total_tokens = prompt_tokens + completion_tokens
 
         cost_usd: float | None = None
         try:
             # Estimated value from LiteLLM pricing metadata when available.
-            cost_usd = self._as_float(litellm.completion_cost(completion_response=response))
+            cost_usd = self._as_float(
+                litellm.completion_cost(completion_response=response)
+            )
         except Exception:
             cost_usd = None
 
-        if prompt_tokens is None and completion_tokens is None and total_tokens is None and cost_usd is None:
+        if (
+            prompt_tokens is None
+            and completion_tokens is None
+            and total_tokens is None
+            and cost_usd is None
+        ):
             return None
 
         model_name = getattr(response, "model", None)
@@ -214,20 +229,24 @@ class LiteLLMProvider(BaseProvider):
             assert self._openai_client is not None
             response = await self._openai_client.chat.completions.create(
                 model=self._local_model_id(),
-                messages=messages,
+                messages=cast(Any, messages),
                 **request_kwargs,
             )
             elapsed_ms = (time.monotonic() - started) * 1000
-            self._last_usage = self._extract_completion_usage(response, elapsed_ms=int(elapsed_ms))
+            self._last_usage = self._extract_completion_usage(
+                response, elapsed_ms=int(elapsed_ms)
+            )
             return self._message_to_dict(response.choices[0].message)
 
         response = await litellm.acompletion(
-            messages=messages,
+            messages=cast(Any, messages),
             **request_kwargs,
             **self._common_kwargs(),
         )
         elapsed_ms = (time.monotonic() - started) * 1000
-        self._last_usage = self._extract_completion_usage(response, elapsed_ms=int(elapsed_ms))
+        self._last_usage = self._extract_completion_usage(
+            response, elapsed_ms=int(elapsed_ms)
+        )
         return self._message_to_dict(response.choices[0].message)
 
     async def complete(
@@ -255,7 +274,7 @@ class LiteLLMProvider(BaseProvider):
         )
         return assistant_message.get("content") or ""
 
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         *,
@@ -270,34 +289,37 @@ class LiteLLMProvider(BaseProvider):
         Yields:
             Text delta strings as they are received from the model.
         """
-        messages = self._prepare_messages(messages)
-        request_kwargs: dict[str, Any] = {}
-        if tools is not None:
-            request_kwargs["tools"] = tools
-        if tool_choice is not None:
-            request_kwargs["tool_choice"] = tool_choice
+        async def _stream() -> AsyncIterator[str]:
+            prepared_messages = self._prepare_messages(messages)
+            request_kwargs: dict[str, Any] = {}
+            if tools is not None:
+                request_kwargs["tools"] = tools
+            if tool_choice is not None:
+                request_kwargs["tool_choice"] = tool_choice
 
-        if self._is_local_provider():
-            assert self._openai_client is not None
-            response = await self._openai_client.chat.completions.create(
-                model=self._local_model_id(),
-                messages=messages,
+            if self._is_local_provider():
+                assert self._openai_client is not None
+                response = await self._openai_client.chat.completions.create(
+                    model=self._local_model_id(),
+                    messages=cast(Any, prepared_messages),
+                    stream=True,
+                    **request_kwargs,
+                )
+                async for chunk in cast(Any, response):
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                return
+
+            response = await litellm.acompletion(
+                messages=cast(Any, prepared_messages),
                 stream=True,
                 **request_kwargs,
+                **self._common_kwargs(),
             )
-            async for chunk in response:
+            async for chunk in cast(Any, response):
                 delta = chunk.choices[0].delta.content
                 if delta:
                     yield delta
-            return
 
-        response = await litellm.acompletion(
-            messages=messages,
-            stream=True,
-            **request_kwargs,
-            **self._common_kwargs(),
-        )
-        async for chunk in response:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
+        return _stream()

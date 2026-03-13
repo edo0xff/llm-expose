@@ -7,13 +7,15 @@ import base64
 import io
 import logging
 import mimetypes
-from datetime import datetime as dt, timezone
+from datetime import UTC
+from datetime import datetime as dt
 from pathlib import Path
 from typing import Any
 
 import discord
 
-from llm_expose.clients.base import BaseClient, MessageHandler as LLMHandler, MessageResponse
+from llm_expose.clients.base import BaseClient, MessageResponse
+from llm_expose.clients.base import MessageHandler as LLMHandler
 from llm_expose.config.models import DiscordClientConfig
 from llm_expose.core.content_parts import build_user_content
 
@@ -39,7 +41,9 @@ def _chunk_text(text: str, max_len: int = _DISCORD_MAX_LEN) -> list[str]:
 class _ApprovalView(discord.ui.View):
     """Discord UI View with Approve/Reject buttons for tool execution approval."""
 
-    def __init__(self, client: "DiscordClient", approval_id: str, timeout: float = 600.0) -> None:
+    def __init__(
+        self, client: DiscordClient, approval_id: str, timeout: float = 600.0
+    ) -> None:
         super().__init__(timeout=timeout)
         self._client = client
         self._approval_id = approval_id
@@ -54,11 +58,18 @@ class _ApprovalView(discord.ui.View):
 
         channel_id = str(interaction.channel_id)
         command_text = f"{decision} {self._approval_id}"
-        logger.info("Discord approval button pressed: %s in channel %s", command_text, channel_id)
+        logger.info(
+            "Discord approval button pressed: %s in channel %s",
+            command_text,
+            channel_id,
+        )
 
         try:
             bound_self = getattr(self._client._handler, "__self__", None)
-            if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
+            if (
+                bound_self is not None
+                and bound_self.__class__.__name__ == "Orchestrator"
+            ):
                 reply = await self._client._handler(
                     channel_id,
                     command_text,
@@ -83,11 +94,15 @@ class _ApprovalView(discord.ui.View):
                     await asyncio.sleep(_CHUNK_DELAY)
 
     @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success)
-    async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:  # noqa: ARG002
+    async def approve_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:  # noqa: ARG002
         await self._handle(interaction, "approve")
 
     @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
-    async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:  # noqa: ARG002
+    async def reject_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:  # noqa: ARG002
         await self._handle(interaction, "reject")
 
 
@@ -141,7 +156,9 @@ class DiscordClient(BaseClient):
         stable across library versions.
         """
         intents = discord.Intents.default()
-        intents.message_content = True  # Privileged intent; must also be enabled in Portal
+        intents.message_content = (
+            True  # Privileged intent; must also be enabled in Portal
+        )
 
         # Make message event subscriptions explicit when attributes exist.
         for attr in ("messages", "guild_messages", "dm_messages"):
@@ -160,7 +177,9 @@ class DiscordClient(BaseClient):
             try:
                 channel = await self._bot.fetch_channel(channel_int)
             except Exception as exc:
-                logger.warning("Could not fetch Discord channel %s: %s", channel_id, exc)
+                logger.warning(
+                    "Could not fetch Discord channel %s: %s", channel_id, exc
+                )
                 return None
         return channel  # type: ignore[return-value]
 
@@ -192,10 +211,14 @@ class DiscordClient(BaseClient):
     # ------------------------------------------------------------------
 
     async def _on_ready(self) -> None:
+        if self._bot is None:
+            logger.info("Discord on_ready received but bot is not initialized")
+            return
+
         logger.info(
             "Discord bot connected as %s (id=%s), joined %d guild(s)",
-            self._bot.user,  # type: ignore[union-attr]
-            self._bot.user.id if self._bot and self._bot.user else "?",  # type: ignore[union-attr]
+            self._bot.user,
+            self._bot.user.id if self._bot and self._bot.user else "?",
             len(self._bot.guilds) if self._bot else 0,
         )
 
@@ -230,7 +253,9 @@ class DiscordClient(BaseClient):
         async with message.channel.typing():
             try:
                 if self._orchestrator is not None:
-                    message_content = build_user_content(user_text, image_urls=image_urls)
+                    message_content = build_user_content(
+                        user_text, image_urls=image_urls
+                    )
                     reply = await self._handler(
                         channel_id,
                         user_text,
@@ -238,7 +263,9 @@ class DiscordClient(BaseClient):
                         message_context={
                             "platform": "discord",
                             "channel_id": channel_id,
-                            "guild_id": str(message.guild.id) if message.guild else None,
+                            "guild_id": (
+                                str(message.guild.id) if message.guild else None
+                            ),
                         },
                     )
                 else:
@@ -252,7 +279,7 @@ class DiscordClient(BaseClient):
             if reply.approval_id:
                 view = _ApprovalView(self, reply.approval_id)
                 sent = await self._send_text_to_channel(
-                    message.channel,  # type: ignore[arg-type]
+                    message.channel,
                     reply.content,
                     view=view,
                 )
@@ -263,22 +290,22 @@ class DiscordClient(BaseClient):
                     )
                 if reply.images:
                     await self._send_images_to_channel(
-                        message.channel,  # type: ignore[arg-type]
+                        message.channel,
                         reply.images,
                     )
             else:
                 await self._send_text_to_channel(
-                    message.channel,  # type: ignore[arg-type]
+                    message.channel,
                     reply.content,
                 )
                 if reply.images:
                     await self._send_images_to_channel(
-                        message.channel,  # type: ignore[arg-type]
+                        message.channel,
                         reply.images,
                     )
         else:
             await self._send_text_to_channel(
-                message.channel,  # type: ignore[arg-type]
+                message.channel,
                 str(reply),
             )
 
@@ -296,7 +323,9 @@ class DiscordClient(BaseClient):
                 mime = content_type.split(";", 1)[0].strip() or "image/jpeg"
                 image_urls.append(f"data:{mime};base64,{encoded}")
             except Exception as exc:
-                logger.warning("Failed to read Discord attachment %s: %s", attachment.filename, exc)
+                logger.warning(
+                    "Failed to read Discord attachment %s: %s", attachment.filename, exc
+                )
         return image_urls
 
     async def _send_images_to_channel(
@@ -350,20 +379,24 @@ class DiscordClient(BaseClient):
             and approval_id in self._approval_messages
             and self._bot is not None
         ):
-            approval_channel_id, approval_message_id = self._approval_messages[approval_id]
+            approval_channel_id, approval_message_id = self._approval_messages[
+                approval_id
+            ]
             try:
                 channel = await self._get_channel(approval_channel_id)
                 if channel is not None:
-                    msg = await channel.fetch_message(int(approval_message_id))  # type: ignore[union-attr]
+                    msg = await channel.fetch_message(int(approval_message_id))
                     await msg.edit(content=text)
                     return
             except Exception as exc:
-                logger.warning("Could not edit approval message for running status: %s", exc)
+                logger.warning(
+                    "Could not edit approval message for running status: %s", exc
+                )
 
         # Fall back to sending a new message
         channel = await self._get_channel(user_id)
         if channel is not None:
-            await channel.send(text)  # type: ignore[union-attr]
+            await channel.send(text)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -386,8 +419,13 @@ class DiscordClient(BaseClient):
         self._bot = discord.Client(intents=intents)
 
         # Register explicit listeners so event wiring remains testable.
-        self._bot.add_listener(self._on_ready, "on_ready")
-        self._bot.add_listener(self._on_message, "on_message")
+        add_listener = getattr(self._bot, "add_listener", None)
+        if callable(add_listener):
+            add_listener(self._on_ready, "on_ready")
+            add_listener(self._on_message, "on_message")
+        else:
+            self._bot.event(self._on_ready)
+            self._bot.event(self._on_message)
 
         logger.info("Starting Discord bot…")
         try:
@@ -445,7 +483,7 @@ class DiscordClient(BaseClient):
         message_id = str(last_msg.id) if last_msg else "unknown"
         return {
             "message_id": message_id,
-            "timestamp": dt.now(timezone.utc).isoformat(),
+            "timestamp": dt.now(UTC).isoformat(),
             "status": "sent",
             "user_id": user_id,
         }
@@ -490,7 +528,7 @@ class DiscordClient(BaseClient):
 
         return {
             "message_id": str(msg.id),
-            "timestamp": dt.now(timezone.utc).isoformat(),
+            "timestamp": dt.now(UTC).isoformat(),
             "status": "sent",
             "user_id": user_id,
             "file_name": resolved.name,

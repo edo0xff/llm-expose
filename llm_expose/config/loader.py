@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -170,7 +169,7 @@ def delete_model(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def save_channel(name: str, config: "TelegramClientConfig | DiscordClientConfig") -> Path:
+def save_channel(name: str, config: TelegramClientConfig | DiscordClientConfig) -> Path:
     """Persist a channel configuration to a YAML file.
 
     Args:
@@ -211,6 +210,7 @@ def load_channel(name: str) -> ClientConfig:
     data.pop("name", None)
     # Pydantic's discriminated union routes via client_type field
     from pydantic import TypeAdapter
+
     _adapter: TypeAdapter[ClientConfig] = TypeAdapter(ClientConfig)
     return _adapter.validate_python(data)
 
@@ -357,7 +357,7 @@ def save_pairings_config(config: PairingsConfig) -> Path:
     return path
 
 
-def list_pairs(channel_name: Optional[str] = None) -> dict[str, list[str]]:
+def list_pairs(channel_name: str | None = None) -> dict[str, list[str]]:
     """Return channel-scoped pair IDs.
 
     Args:
@@ -368,7 +368,11 @@ def list_pairs(channel_name: Optional[str] = None) -> dict[str, list[str]]:
         return config.pairs_by_channel
 
     normalized_channel_name = channel_name.strip()
-    return {normalized_channel_name: config.pairs_by_channel.get(normalized_channel_name, [])}
+    return {
+        normalized_channel_name: config.pairs_by_channel.get(
+            normalized_channel_name, []
+        )
+    }
 
 
 def get_pairs_for_channel(channel_name: str) -> list[str]:
@@ -393,7 +397,10 @@ def add_pair(channel_name: str, pair_id: str) -> Path:
     config = load_pairings_config()
     existing = config.pairs_by_channel.get(normalized_channel_name, [])
     if normalized_pair_id not in existing:
-        config.pairs_by_channel[normalized_channel_name] = [*existing, normalized_pair_id]
+        config.pairs_by_channel[normalized_channel_name] = [
+            *existing,
+            normalized_pair_id,
+        ]
     return save_pairings_config(config)
 
 

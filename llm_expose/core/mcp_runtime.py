@@ -30,7 +30,9 @@ class MCPRuntimeManager:
         self._tool_to_client: dict[str, Any] = {}  # tool_name -> fastmcp.Client
         self._tool_to_server: dict[str, str] = {}  # tool_name -> server_name
         self._clients: dict[str, Any] = {}  # server_name -> fastmcp.Client
-        self._server_instructions: list[str] = []  # Aggregated instructions from servers
+        self._server_instructions: list[str] = (
+            []
+        )  # Aggregated instructions from servers
 
     @property
     def tools(self) -> list[ToolSpec]:
@@ -116,7 +118,9 @@ class MCPRuntimeManager:
                 await self._fetch_server_prompts(server, client)
 
             except Exception as exc:
-                logger.warning("Failed to initialize MCP server '%s': %s", server.name, exc)
+                logger.warning(
+                    "Failed to initialize MCP server '%s': %s", server.name, exc
+                )
 
         self._initialized = True
 
@@ -193,7 +197,11 @@ class MCPRuntimeManager:
         allowed = set(server.allowed_tools)
 
         # mcp_tools could be a list or a response object with .tools attribute
-        tools_list = mcp_tools if isinstance(mcp_tools, list) else getattr(mcp_tools, "tools", [])
+        tools_list = (
+            mcp_tools
+            if isinstance(mcp_tools, list)
+            else getattr(mcp_tools, "tools", [])
+        )
 
         for tool in tools_list:
             # Convert MCP tool to OpenAI-compatible format
@@ -216,7 +224,11 @@ class MCPRuntimeManager:
         try:
             # List available prompts from the server
             prompts_result = await client.list_prompts()
-            prompts_list = prompts_result if isinstance(prompts_result, list) else getattr(prompts_result, "prompts", [])
+            prompts_list = (
+                prompts_result
+                if isinstance(prompts_result, list)
+                else getattr(prompts_result, "prompts", [])
+            )
 
             if not prompts_list:
                 logger.debug("No prompts available from MCP server '%s'", server.name)
@@ -225,7 +237,11 @@ class MCPRuntimeManager:
             # Fetch each prompt's content
             for prompt in prompts_list:
                 try:
-                    prompt_name = prompt if isinstance(prompt, str) else getattr(prompt, "name", None)
+                    prompt_name = (
+                        prompt
+                        if isinstance(prompt, str)
+                        else getattr(prompt, "name", None)
+                    )
                     if not prompt_name:
                         continue
 
@@ -236,8 +252,14 @@ class MCPRuntimeManager:
                     # Extract message content from the prompt
                     messages = prompt_dict.get("messages", [])
                     for msg in messages:
-                        msg_dict = self._to_dict(msg) if not isinstance(msg, dict) else msg
-                        content = msg_dict.get("content", {}) if isinstance(msg_dict.get("content"), dict) else msg_dict.get("content")
+                        msg_dict = (
+                            self._to_dict(msg) if not isinstance(msg, dict) else msg
+                        )
+                        content = (
+                            msg_dict.get("content", {})
+                            if isinstance(msg_dict.get("content"), dict)
+                            else msg_dict.get("content")
+                        )
 
                         # Handle both string and structured content
                         if isinstance(content, str) and content.strip():
@@ -250,10 +272,17 @@ class MCPRuntimeManager:
                                 self._server_instructions.append(instruction)
 
                 except Exception as prompt_exc:
-                    logger.debug("Could not fetch prompt '%s' from server '%s': %s", prompt_name, server.name, prompt_exc)
+                    logger.debug(
+                        "Could not fetch prompt '%s' from server '%s': %s",
+                        prompt_name,
+                        server.name,
+                        prompt_exc,
+                    )
 
         except Exception as exc:
-            logger.debug("No prompts available from MCP server '%s': %s", server.name, exc)
+            logger.debug(
+                "No prompts available from MCP server '%s': %s", server.name, exc
+            )
 
     def _mcp_tool_to_openai(self, mcp_tool: Any) -> dict[str, Any] | None:
         """Convert MCP tool schema to OpenAI function tool format."""
@@ -287,9 +316,13 @@ class MCPRuntimeManager:
         if isinstance(value, dict):
             return value
         if hasattr(value, "model_dump"):
-            return value.model_dump(exclude_none=True)
+            dumped = value.model_dump(exclude_none=True)
+            if isinstance(dumped, dict):
+                return dumped
         if hasattr(value, "dict"):
-            return value.dict(exclude_none=True)
+            dumped = value.dict(exclude_none=True)
+            if isinstance(dumped, dict):
+                return dumped
         try:
             return dict(value)
         except Exception:
@@ -357,7 +390,11 @@ class MCPRuntimeManager:
         if isinstance(result, str):
             return result
 
-        result_dict = MCPRuntimeManager._to_dict(result) if not isinstance(result, dict) else result
+        result_dict = (
+            MCPRuntimeManager._to_dict(result)
+            if not isinstance(result, dict)
+            else result
+        )
 
         # Check for content list (MCP standard format)
         content = result_dict.get("content")
@@ -388,7 +425,9 @@ class MCPRuntimeManager:
                 elif hasattr(client, "disconnect"):
                     await client.disconnect()
             except Exception as exc:
-                logger.warning("Error disconnecting MCP client '%s': %s", server_name, exc)
+                logger.warning(
+                    "Error disconnecting MCP client '%s': %s", server_name, exc
+                )
         await self._stack.aclose()
         # Ensure runtime can be cleanly re-initialized after shutdown/reload.
         self._stack = AsyncExitStack()

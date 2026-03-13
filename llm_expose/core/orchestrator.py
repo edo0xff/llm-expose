@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from llm_expose.clients.base import BaseClient, MessageResponse
 from llm_expose.config.loader import get_pairs_for_channel, load_mcp_config
@@ -121,10 +121,13 @@ class Orchestrator:
         self._channel_name = config.channel_name
         self._paired_channel_ids: set[str] = set()
         self._usage_by_channel: dict[str, _UsageStats] = {}
+        self._startup_warnings: list[str] = []
 
         if self._channel_name:
             try:
-                self._paired_channel_ids = set(get_pairs_for_channel(self._channel_name))
+                self._paired_channel_ids = set(
+                    get_pairs_for_channel(self._channel_name)
+                )
             except Exception as exc:  # pragma: no cover - defensive logging path
                 logger.warning("Failed to load channel pairs: %s", exc)
 
@@ -134,7 +137,9 @@ class Orchestrator:
             attached_server_names = set(config.client.mcp_servers)
             if attached_server_names:
                 available_server_names = {server.name for server in mcp_config.servers}
-                missing_server_names = sorted(attached_server_names - available_server_names)
+                missing_server_names = sorted(
+                    attached_server_names - available_server_names
+                )
                 if missing_server_names:
                     logger.warning(
                         "Channel '%s' has missing MCP server attachments: %s",
@@ -166,49 +171,47 @@ class Orchestrator:
 
     def _load_system_prompt(self) -> str:
         """Load the system prompt from file, with fallback to default.
-        
+
         If system_prompt_path is configured:
         - Reads the file and returns its contents (trimmed).
         - If file doesn't exist: logs warning, emits CLI warning, returns default prompt.
-        
+
         If no path is configured:
         - Returns the default system prompt.
-        
+
         Caches the result after the first load to avoid repeated file I/O.
-        
+
         Returns:
             The system prompt text to use.
         """
         # Return cached result if already loaded
         if self._loaded_system_prompt is not None:
             return self._loaded_system_prompt
-        
+
         # No custom prompt path configured, use default
         if not self._system_prompt_path:
             self._loaded_system_prompt = _DEFAULT_SYSTEM_PROMPT
             return self._loaded_system_prompt
-        
+
         # Try to read the prompt file
         prompt_file = Path(self._system_prompt_path)
         if not prompt_file.exists():
             warning_msg = f"System prompt file not found: {self._system_prompt_path}"
             logger.warning(warning_msg)
             # Store warning for CLI to display (will be picked up during startup)
-            if not hasattr(self, '_startup_warnings'):
-                self._startup_warnings: list[str] = []
             self._startup_warnings.append(warning_msg)
             self._loaded_system_prompt = _DEFAULT_SYSTEM_PROMPT
             return self._loaded_system_prompt
-        
+
         try:
-            content = prompt_file.read_text(encoding='utf-8').strip()
+            content = prompt_file.read_text(encoding="utf-8").strip()
             self._loaded_system_prompt = content if content else _DEFAULT_SYSTEM_PROMPT
             return self._loaded_system_prompt
         except Exception as e:
-            error_msg = f"Error reading system prompt file {self._system_prompt_path}: {e}"
+            error_msg = (
+                f"Error reading system prompt file {self._system_prompt_path}: {e}"
+            )
             logger.warning(error_msg)
-            if not hasattr(self, '_startup_warnings'):
-                self._startup_warnings: list[str] = []
             self._startup_warnings.append(error_msg)
             self._loaded_system_prompt = _DEFAULT_SYSTEM_PROMPT
             return self._loaded_system_prompt
@@ -236,9 +239,14 @@ class Orchestrator:
             if mcp_runtime and mcp_runtime_initialized:
                 mcp_instructions = mcp_runtime.server_instructions
                 if mcp_instructions:
-                    system_content += "\n\n## These are the available MCP tools that you can call:\n\n" + mcp_instructions
+                    system_content += (
+                        "\n\n## These are the available MCP tools that you can call:\n\n"
+                        + mcp_instructions
+                    )
                     system_content += "\n\nTo call a tool, you must output only a JSON object in this format:"
-                    system_content += "\n\n{\"name\": \"tool_name\", \"args\": {\"arg_name\": \"value\"}}"
+                    system_content += (
+                        '\n\n{"name": "tool_name", "args": {"arg_name": "value"}}'
+                    )
                     system_content += "\n\nIf no tool is needed, respond normally."
 
             self._histories[channel_id] = [
@@ -275,7 +283,9 @@ class Orchestrator:
             text = user_message
 
         if not self._is_channel_paired(channel_id):
-            return f"This instance is not paired. Run `llm-expose add pair {channel_id}`"
+            return (
+                f"This instance is not paired. Run `llm-expose add pair {channel_id}`"
+            )
 
         approval_decision = self._parse_approval_decision(text)
         if approval_decision is not None:
@@ -318,13 +328,13 @@ class Orchestrator:
             return reply
 
         # Use mixed approval handler which respects per-server confirmation settings
-        reply = await self._handle_message_with_mixed_approval(
+        mixed_reply = await self._handle_message_with_mixed_approval(
             history,
             tools,
             channel_id,
             execution_context=execution_context,
         )
-        return reply
+        return mixed_reply
 
     def _build_tool_execution_context(
         self,
@@ -336,7 +346,7 @@ class Orchestrator:
     ) -> ToolExecutionContext:
         context = message_context or {}
         chat_type = str(context.get("chat_type") or "").strip().lower() or None
-        subject_kind = "chat"
+        subject_kind: Literal["user", "group", "chat", "unknown"] = "chat"
         if chat_type == "private":
             subject_kind = "user"
         elif chat_type in {"group", "supergroup", "channel"}:
@@ -399,21 +409,21 @@ class Orchestrator:
 
     def _get_tool_confirmation_mode(self, tool_name: str) -> str:
         """Determine confirmation mode for a tool based on its server config.
-        
+
         Returns:
             "required" if tool needs approval, "optional" if it auto-executes.
         """
         if self._mcp_runtime is None:
             return self._mcp_settings.confirmation_mode
-        
+
         server_name = self._mcp_runtime.get_tool_server_name(tool_name)
         if server_name is None:
             return self._mcp_settings.confirmation_mode
-        
+
         server_config = self._mcp_runtime.get_server_config(server_name)
         if server_config is None:
             return self._mcp_settings.confirmation_mode
-        
+
         # Resolve per-server confirmation setting
         if server_config.tool_confirmation == "default":
             return self._mcp_settings.confirmation_mode
@@ -428,7 +438,7 @@ class Orchestrator:
         tools: list[ToolSpec],
         channel_id: str,
         execution_context: ToolExecutionContext | None = None,
-    ) -> str:
+    ) -> str | MessageResponse:
         assistant_message = await self._provider_complete_message(
             history,
             channel_id=channel_id,
@@ -445,7 +455,11 @@ class Orchestrator:
         server_names: dict[str, str] = {}
         if self._mcp_runtime is not None:
             for call in tool_calls:
-                function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+                function_obj = (
+                    call.get("function")
+                    if isinstance(call, dict)
+                    else getattr(call, "function", None)
+                )
                 if isinstance(function_obj, dict):
                     tool_name = function_obj.get("name")
                 else:
@@ -466,18 +480,27 @@ class Orchestrator:
         )
         return self._format_approval_prompt(approval_id, tool_calls, server_names)
 
-    def _format_approval_prompt(self, approval_id: str, tool_calls: list[Any], server_names: dict[str, str] | None = None) -> MessageResponse:
+    def _format_approval_prompt(
+        self,
+        approval_id: str,
+        tool_calls: list[Any],
+        server_names: dict[str, str] | None = None,
+    ) -> MessageResponse:
         tool_info: list[str] = []
         tool_names: list[str] = []
         for call in tool_calls:
-            function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+            function_obj = (
+                call.get("function")
+                if isinstance(call, dict)
+                else getattr(call, "function", None)
+            )
             if isinstance(function_obj, dict):
                 name = function_obj.get("name")
             else:
                 name = getattr(function_obj, "name", None)
             tool_name = str(name or "unknown_tool")
             tool_names.append(tool_name)
-            
+
             # Add server name if available
             if server_names and tool_name in server_names:
                 tool_info.append(f"{server_names[tool_name]}.{tool_name}")
@@ -494,7 +517,7 @@ class Orchestrator:
             content=content,
             approval_id=approval_id,
             tool_names=tool_names,
-            server_names=server_names or {}
+            server_names=server_names or {},
         )
 
     async def _handle_message_with_mixed_approval(
@@ -503,9 +526,9 @@ class Orchestrator:
         tools: list[ToolSpec],
         channel_id: str,
         execution_context: ToolExecutionContext | None = None,
-    ) -> str:
+    ) -> str | MessageResponse:
         """Handle message with per-server tool confirmation settings.
-        
+
         This method splits tool calls into auto-execute and needs-approval groups,
         executes auto-execute tools immediately, and creates pending approvals for
         tools that require confirmation.
@@ -530,7 +553,11 @@ class Orchestrator:
             needs_approval_calls: list[Any] = []
 
             for call in tool_calls:
-                function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+                function_obj = (
+                    call.get("function")
+                    if isinstance(call, dict)
+                    else getattr(call, "function", None)
+                )
                 if isinstance(function_obj, dict):
                     tool_name = function_obj.get("name")
                 else:
@@ -562,13 +589,19 @@ class Orchestrator:
                 server_names: dict[str, str] = {}
                 if self._mcp_runtime is not None:
                     for call in needs_approval_calls:
-                        function_obj = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+                        function_obj = (
+                            call.get("function")
+                            if isinstance(call, dict)
+                            else getattr(call, "function", None)
+                        )
                         if isinstance(function_obj, dict):
                             tool_name = function_obj.get("name")
                         else:
                             tool_name = getattr(function_obj, "name", None)
                         if tool_name:
-                            server_name = self._mcp_runtime.get_tool_server_name(tool_name)
+                            server_name = self._mcp_runtime.get_tool_server_name(
+                                tool_name
+                            )
                             if server_name:
                                 server_names[tool_name] = server_name
 
@@ -581,11 +614,15 @@ class Orchestrator:
                     server_names=server_names,
                     execution_context=execution_context,
                 )
-                return self._format_approval_prompt(approval_id, needs_approval_calls, server_names)
+                return self._format_approval_prompt(
+                    approval_id, needs_approval_calls, server_names
+                )
 
             # If only auto-execute tools were present, continue the loop
 
-        fallback = "Tool execution exceeded maximum rounds; stopping to avoid infinite loop."
+        fallback = (
+            "Tool execution exceeded maximum rounds; stopping to avoid infinite loop."
+        )
         history.append({"role": "assistant", "content": fallback})
         return fallback
 
@@ -671,7 +708,7 @@ class Orchestrator:
                     ),
                     timeout=self._mcp_settings.tool_timeout_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 tool_result = (
                     "MCP tool execution timed out after "
                     f"{self._mcp_settings.tool_timeout_seconds} seconds."
@@ -726,10 +763,17 @@ class Orchestrator:
                 detail=detail,
             )
         except Exception as exc:
-            logger.debug("Failed to publish tool status '%s' for '%s': %s", status, tool_name, exc)
+            logger.debug(
+                "Failed to publish tool status '%s' for '%s': %s",
+                status,
+                tool_name,
+                exc,
+            )
 
     @staticmethod
-    def _feedback_target_id(execution_context: ToolExecutionContext | None) -> str | None:
+    def _feedback_target_id(
+        execution_context: ToolExecutionContext | None,
+    ) -> str | None:
         if execution_context is None:
             return None
         if execution_context.subject_id:
@@ -784,7 +828,11 @@ class Orchestrator:
         latency_ms = _coerce_int(raw_usage.get("latency_ms"))
         model = raw_usage.get("model")
 
-        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        if (
+            total_tokens is None
+            and prompt_tokens is not None
+            and completion_tokens is not None
+        ):
             total_tokens = prompt_tokens + completion_tokens
 
         if (
@@ -830,7 +878,6 @@ class Orchestrator:
             stats.total_tokens += total_tokens
         if isinstance(cost_usd, float):
             stats.cost_usd += cost_usd
-            
 
     async def _provider_complete_message(
         self,
@@ -853,7 +900,9 @@ class Orchestrator:
                 if isinstance(message, dict):
                     return message
                 if hasattr(message, "model_dump"):
-                    return message.model_dump(exclude_none=True)
+                    dumped = message.model_dump(exclude_none=True)
+                    if isinstance(dumped, dict):
+                        return dumped
                 return {
                     "role": getattr(message, "role", "assistant"),
                     "content": getattr(message, "content", ""),
@@ -876,12 +925,12 @@ class Orchestrator:
         execution_context: ToolExecutionContext | None = None,
     ) -> str:
         """Handle message with auto-execute tools (no approval).
-        
+
         Delegates to ToolAwareCompletion for reusable tool handling.
         """
         if self._mcp_runtime is None:
             return "MCP runtime unavailable while handling tool calls."
-        
+
         # Use ToolAwareCompletion with existing runtime
         async with ToolAwareCompletion(
             provider=self._provider,
@@ -1018,7 +1067,9 @@ class Orchestrator:
     def _admin_start(self, channel_id: str) -> str:
         """Return onboarding instructions and inject setup context for this channel."""
         if not self._is_channel_paired(channel_id):
-            return f"This instance is not paired. Run `llm-expose add pair {channel_id}`"
+            return (
+                f"This instance is not paired. Run `llm-expose add pair {channel_id}`"
+            )
 
         self._ensure_start_onboarding_context(channel_id)
         return _START_ONBOARDING_VISIBLE_TEXT
@@ -1084,9 +1135,7 @@ class Orchestrator:
             return self._admin_tools()
         if cmd == "reload":
             return await self._admin_reload(channel_id)
-        return (
-            "Unknown command. Use /list to see available admin commands."
-        )
+        return "Unknown command. Use /list to see available admin commands."
 
     async def run(self) -> None:
         """Start the client and block until it stops.

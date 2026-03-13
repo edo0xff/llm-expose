@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import json
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from llm_expose.config.loader import get_pairs_for_channel
 from llm_expose.core.content_parts import file_to_data_url
 
 
-class _MessageSenderProtocol:
+class _MessageSenderProtocol(Protocol):
     async def send_message(self, user_id: str, text: str) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -98,20 +97,24 @@ class _GetInvocationContextTool(_BuiltinTool):
         execution_context: ToolExecutionContext | None,
     ) -> dict[str, Any]:
         del arguments
-        payload = execution_context.to_public_dict() if execution_context is not None else {
-            "execution_mode": "unknown",
-            "channel_id": None,
-            "channel_name": None,
-            "subject_id": None,
-            "subject_kind": "unknown",
-            "user_id": None,
-            "group_id": None,
-            "initiator_user_id": None,
-            "platform": None,
-            "chat_type": None,
-            "attachments": [],
-            "invoked_at": datetime.now(UTC).isoformat(),
-        }
+        payload = (
+            execution_context.to_public_dict()
+            if execution_context is not None
+            else {
+                "execution_mode": "unknown",
+                "channel_id": None,
+                "channel_name": None,
+                "subject_id": None,
+                "subject_kind": "unknown",
+                "user_id": None,
+                "group_id": None,
+                "initiator_user_id": None,
+                "platform": None,
+                "chat_type": None,
+                "attachments": [],
+                "invoked_at": datetime.now(UTC).isoformat(),
+            }
+        )
         return {
             "content": [
                 {
@@ -149,7 +152,9 @@ class _GetPairingIdsTool(_BuiltinTool):
             return _error_result("execution context unavailable in this execution mode")
         channel_name = execution_context.channel_name
         if not channel_name:
-            return _error_result("channel_name is not available in the current execution context")
+            return _error_result(
+                "channel_name is not available in the current execution context"
+            )
         try:
             pairing_ids = get_pairs_for_channel(channel_name)
         except Exception as exc:
@@ -193,7 +198,11 @@ class _GetInvocationAttachmentsTool(_BuiltinTool):
     ) -> dict[str, Any]:
         del arguments
         payload = {
-            "attachments": list(execution_context.attachments) if execution_context is not None else [],
+            "attachments": (
+                list(execution_context.attachments)
+                if execution_context is not None
+                else []
+            ),
         }
         return {
             "content": [
@@ -530,7 +539,7 @@ class BuiltinMCPClient:
             ]
         }
 
-    async def __aenter__(self) -> "BuiltinMCPClient":
+    async def __aenter__(self) -> BuiltinMCPClient:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -550,9 +559,13 @@ class BuiltinMCPClient:
         return []
 
     async def get_prompt(self, prompt_name: str) -> dict[str, Any]:
-        raise ValueError(f"Builtin MCP server '{self._server_name}' has no prompt named '{prompt_name}'.")
+        raise ValueError(
+            f"Builtin MCP server '{self._server_name}' has no prompt named '{prompt_name}'."
+        )
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         return await self.call_tool_with_context(
             tool_name,
             arguments,

@@ -6,7 +6,8 @@ import asyncio
 import base64
 import logging
 import mimetypes
-from datetime import datetime as dt, timezone
+from datetime import UTC
+from datetime import datetime as dt
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,8 @@ from telegram.ext import (
     filters,
 )
 
-from llm_expose.clients.base import BaseClient, MessageHandler as LLMHandler, MessageResponse
+from llm_expose.clients.base import BaseClient, MessageResponse
+from llm_expose.clients.base import MessageHandler as LLMHandler
 from llm_expose.config.models import TelegramClientConfig
 from llm_expose.core.content_parts import build_user_content
 
@@ -28,10 +30,8 @@ logger = logging.getLogger(__name__)
 
 MARKDOWN_PARSE_MODE = "MarkdownV2"
 
-RESERVED_PARSE_CHARACTERS = [
-  '(',
-  ')'
-]
+RESERVED_PARSE_CHARACTERS = ["(", ")"]
+
 
 class TelegramClient(BaseClient):
     """Messaging client adapter for Telegram.
@@ -62,17 +62,23 @@ class TelegramClient(BaseClient):
             # Escape special characters in Telegram markdown
             for char in RESERVED_PARSE_CHARACTERS:
                 text = text.replace(char, f"\\{char}")
-            return await message.reply_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
+            return await message.reply_text(
+                text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs
+            )
         except BadRequest as exc:
             if "Can't parse entities" not in str(exc):
                 raise
-            logger.warning("Markdown parse failed in reply_text, retrying plain text: %s", exc)
+            logger.warning(
+                "Markdown parse failed in reply_text, retrying plain text: %s", exc
+            )
             return await message.reply_text(text, **kwargs)
 
     async def _edit_message_text_safe(self, query, text: str, **kwargs) -> None:
         """Edit a message using Markdown; retry as plain text on parse errors."""
         try:
-            await query.edit_message_text(text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs)
+            await query.edit_message_text(
+                text, parse_mode=MARKDOWN_PARSE_MODE, **kwargs
+            )
         except BadRequest as exc:
             if "Can't parse entities" not in str(exc):
                 raise
@@ -94,7 +100,9 @@ class TelegramClient(BaseClient):
         except BadRequest as exc:
             if "Can't parse entities" not in str(exc):
                 raise
-            logger.warning("Markdown parse failed in send_message, retrying plain text: %s", exc)
+            logger.warning(
+                "Markdown parse failed in send_message, retrying plain text: %s", exc
+            )
             await bot.send_message(chat_id=chat_id, text=text, **kwargs)
 
     async def _edit_chat_message_text_safe(
@@ -151,7 +159,11 @@ class TelegramClient(BaseClient):
 
         raw = (update.message.text or "").strip()
         # Handle both /cmd and /cmd@botname forms
-        command = raw.lstrip("/").split("@")[0].split()[0].lower() if raw.startswith("/") else ""
+        command = (
+            raw.lstrip("/").split("@")[0].split()[0].lower()
+            if raw.startswith("/")
+            else ""
+        )
         args = list(context.args or [])
         chat_id = str(update.message.chat.id)
 
@@ -193,7 +205,10 @@ class TelegramClient(BaseClient):
             # tests/custom integrations, but pass channel context when the
             # orchestrator handler is registered.
             bound_self = getattr(self._handler, "__self__", None)
-            if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
+            if (
+                bound_self is not None
+                and bound_self.__class__.__name__ == "Orchestrator"
+            ):
                 message_content = build_user_content(user_text, image_urls=image_urls)
                 reply = await self._handler(
                     chat_id,
@@ -218,12 +233,10 @@ class TelegramClient(BaseClient):
                 keyboard = [
                     [
                         InlineKeyboardButton(
-                            "✅ Approve",
-                            callback_data=f"approve:{reply.approval_id}"
+                            "✅ Approve", callback_data=f"approve:{reply.approval_id}"
                         ),
                         InlineKeyboardButton(
-                            "❌ Reject",
-                            callback_data=f"reject:{reply.approval_id}"
+                            "❌ Reject", callback_data=f"reject:{reply.approval_id}"
                         ),
                     ]
                 ]
@@ -233,7 +246,10 @@ class TelegramClient(BaseClient):
                     reply.content,
                     reply_markup=reply_markup,
                 )
-                if approval_message is not None and getattr(approval_message, "message_id", None) is not None:
+                if (
+                    approval_message is not None
+                    and getattr(approval_message, "message_id", None) is not None
+                ):
                     self._approval_messages[reply.approval_id] = (
                         chat_id,
                         str(approval_message.message_id),
@@ -270,17 +286,21 @@ class TelegramClient(BaseClient):
         extension = mimetypes.guess_extension(media_type) or ".jpg"
         return InputFile(payload, filename=f"reference{extension}")
 
-    async def _send_images_with_bot(self, bot: Any, chat_id: str, image_urls: list[str]) -> list[dict[str, str]]:
+    async def _send_images_with_bot(
+        self, bot: Any, chat_id: str, image_urls: list[str]
+    ) -> list[dict[str, str]]:
         """Send images using a specific bot instance and collect metadata."""
         sent: list[dict[str, str]] = []
         for image_url in image_urls:
             try:
                 payload = self._photo_payload_from_url(image_url)
                 message = await bot.send_photo(chat_id=chat_id, photo=payload)
-                sent.append({
-                    "message_id": str(message.message_id),
-                    "timestamp": dt.now(timezone.utc).isoformat(),
-                })
+                sent.append(
+                    {
+                        "message_id": str(message.message_id),
+                        "timestamp": dt.now(UTC).isoformat(),
+                    }
+                )
             except Exception as exc:
                 logger.warning("Failed to send reference image: %s", exc)
         return sent
@@ -301,7 +321,9 @@ class TelegramClient(BaseClient):
             telegram_file = await context.bot.get_file(best_photo.file_id)
             payload: bytes | None = None
 
-            download_as_bytearray = getattr(telegram_file, "download_as_bytearray", None)
+            download_as_bytearray = getattr(
+                telegram_file, "download_as_bytearray", None
+            )
             if callable(download_as_bytearray):
                 payload = bytes(await download_as_bytearray())
 
@@ -322,7 +344,7 @@ class TelegramClient(BaseClient):
 
         query = update.callback_query
         chat_id = str(query.message.chat.id) if query.message else None
-        
+
         if not chat_id or not query.data:
             await query.answer("Invalid request.")
             return
@@ -352,13 +374,20 @@ class TelegramClient(BaseClient):
 
         try:
             bound_self = getattr(self._handler, "__self__", None)
-            if bound_self is not None and bound_self.__class__.__name__ == "Orchestrator":
+            if (
+                bound_self is not None
+                and bound_self.__class__.__name__ == "Orchestrator"
+            ):
                 reply = await self._handler(
                     chat_id,
                     command_text,
                     message_context={
                         "platform": "telegram",
-                        "chat_type": getattr(query.message.chat, "type", None) if query.message else None,
+                        "chat_type": (
+                            getattr(query.message.chat, "type", None)
+                            if query.message
+                            else None
+                        ),
                         "effective_user_id": getattr(update.effective_user, "id", None),
                     },
                 )
@@ -398,7 +427,12 @@ class TelegramClient(BaseClient):
 
         bot = self._app.bot if self._app is not None else None
 
-        if status == "running" and approval_id and approval_id in self._approval_messages and bot is not None:
+        if (
+            status == "running"
+            and approval_id
+            and approval_id in self._approval_messages
+            and bot is not None
+        ):
             approval_chat_id, approval_message_id = self._approval_messages[approval_id]
             try:
                 await self._edit_chat_message_text_safe(
@@ -409,7 +443,9 @@ class TelegramClient(BaseClient):
                 )
                 return
             except Exception as exc:
-                logger.warning("Could not edit approval message for running status: %s", exc)
+                logger.warning(
+                    "Could not edit approval message for running status: %s", exc
+                )
 
         if bot is not None:
             await self._send_message_safe(bot, user_id, text)
@@ -424,23 +460,24 @@ class TelegramClient(BaseClient):
     async def start(self) -> None:
         """Build the Telegram application and start polling for updates."""
         self._stop_event = asyncio.Event()
-        self._app = (
-            Application.builder()
-            .token(self._config.bot_token)
-            .build()
-        )
+        self._app = Application.builder().token(self._config.bot_token).build()
 
         # Catch-all for slash commands (/start, /status, /clear, /tools, /reload, …).
         self._app.add_handler(MessageHandler(filters.COMMAND, self._handle_command))
         self._app.add_handler(
-            MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self._handle_message)
+            MessageHandler(
+                (filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self._handle_message
+            )
         )
         self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
 
         logger.info("Starting Telegram bot (polling)…")
         await self._app.initialize()
         await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+        updater = self._app.updater
+        if updater is None:
+            raise RuntimeError("Telegram updater is unavailable")
+        await updater.start_polling(drop_pending_updates=True)
         logger.info("Telegram bot is running. Press Ctrl+C to stop.")
 
         # Keep running until stop() signals shutdown.
@@ -480,12 +517,15 @@ class TelegramClient(BaseClient):
                 if "Can't parse entities" not in str(exc):
                     raise
                 # Retry without Markdown on parse error
-                logger.warning("Markdown parse failed in send_message, retrying plain text: %s", exc)
+                logger.warning(
+                    "Markdown parse failed in send_message, retrying plain text: %s",
+                    exc,
+                )
                 message = await self._app.bot.send_message(chat_id=user_id, text=text)
-            
+
             return {
                 "message_id": str(message.message_id),
-                "timestamp": dt.now(timezone.utc).isoformat(),
+                "timestamp": dt.now(UTC).isoformat(),
                 "status": "sent",
                 "user_id": user_id,
             }
@@ -503,7 +543,9 @@ class TelegramClient(BaseClient):
             self._app = Application.builder().token(self._config.bot_token).build()
             await self._app.initialize()
 
-        sent_items = await self._send_images_with_bot(self._app.bot, user_id, image_urls)
+        sent_items = await self._send_images_with_bot(
+            self._app.bot, user_id, image_urls
+        )
         return {
             "status": "sent",
             "user_id": user_id,
@@ -533,7 +575,7 @@ class TelegramClient(BaseClient):
             file_id = getattr(document, "file_id", None)
             return {
                 "message_id": str(message.message_id),
-                "timestamp": dt.now(timezone.utc).isoformat(),
+                "timestamp": dt.now(UTC).isoformat(),
                 "status": "sent",
                 "user_id": user_id,
                 "file_name": resolved_path.name,
@@ -556,7 +598,9 @@ class TelegramClient(BaseClient):
             self._stop_event.set()
 
         logger.info("Stopping Telegram bot…")
-        await self._app.updater.stop()
+        updater = self._app.updater
+        if updater is not None:
+            await updater.stop()
         await self._app.stop()
         await self._app.shutdown()
         self._app = None

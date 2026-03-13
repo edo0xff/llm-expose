@@ -18,7 +18,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -66,11 +68,15 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_get_invocation_attachments_returns_context_attachments(self) -> None:
+    async def test_builtin_get_invocation_attachments_returns_context_attachments(
+        self,
+    ) -> None:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -108,11 +114,15 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_get_invocation_attachments_returns_empty_without_context(self) -> None:
+    async def test_builtin_get_invocation_attachments_returns_empty_without_context(
+        self,
+    ) -> None:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -167,7 +177,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_text_message_tool_executes_with_sender(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_text_message_tool_executes_with_sender(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -177,14 +189,18 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
         await runtime.initialize()
 
         sender = AsyncMock()
-        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        sender.send_message = AsyncMock(
+            return_value={"status": "sent", "message_id": "7"}
+        )
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
@@ -198,7 +214,9 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_text_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                    "arguments": json.dumps(
+                        {"channel_id": "42", "user_id": "9001", "text": "hello"}
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -213,7 +231,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_file_message_tool_executes_with_sender(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_file_message_tool_executes_with_sender(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -223,7 +243,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -233,7 +255,9 @@ class TestBuiltinMCPRuntime:
         test_file.write_text("hello", encoding="utf-8")
 
         sender = AsyncMock()
-        sender.send_file = AsyncMock(return_value={"status": "sent", "file_name": "sample.txt"})
+        sender.send_file = AsyncMock(
+            return_value={"status": "sent", "file_name": "sample.txt"}
+        )
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
@@ -247,7 +271,13 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_file_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "file_path": str(test_file)}),
+                    "arguments": json.dumps(
+                        {
+                            "channel_id": "42",
+                            "user_id": "9001",
+                            "file_path": str(test_file),
+                        }
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -263,7 +293,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_image_message_tool_executes_with_sender(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_image_message_tool_executes_with_sender(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -273,7 +305,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -297,7 +331,13 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_image_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "image_path": str(image_file)}),
+                    "arguments": json.dumps(
+                        {
+                            "channel_id": "42",
+                            "user_id": "9001",
+                            "image_path": str(image_file),
+                        }
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -316,7 +356,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_image_message_tool_resolves_attachment_ref(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_image_message_tool_resolves_attachment_ref(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -326,7 +368,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -351,7 +395,13 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_image_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "attachment_ref": "att_1"}),
+                    "arguments": json.dumps(
+                        {
+                            "channel_id": "42",
+                            "user_id": "9001",
+                            "attachment_ref": "att_1",
+                        }
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -369,7 +419,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -387,7 +439,9 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_text_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                    "arguments": json.dumps(
+                        {"channel_id": "42", "user_id": "9001", "text": "hello"}
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -400,7 +454,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_file_message_returns_error_for_missing_file(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_file_message_returns_error_for_missing_file(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -410,7 +466,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -430,7 +488,13 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_file_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "file_path": "missing-file.pdf"}),
+                    "arguments": json.dumps(
+                        {
+                            "channel_id": "42",
+                            "user_id": "9001",
+                            "file_path": "missing-file.pdf",
+                        }
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -444,7 +508,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_file_message_tool_resolves_attachment_ref(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_file_message_tool_resolves_attachment_ref(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -454,7 +520,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -464,7 +532,9 @@ class TestBuiltinMCPRuntime:
         test_file.write_text("hello", encoding="utf-8")
 
         sender = AsyncMock()
-        sender.send_file = AsyncMock(return_value={"status": "sent", "file_name": "sample.txt"})
+        sender.send_file = AsyncMock(
+            return_value={"status": "sent", "file_name": "sample.txt"}
+        )
         execution_context = ToolExecutionContext(
             execution_mode="one-shot",
             channel_id="42",
@@ -479,7 +549,13 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_file_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "attachment_ref": "att_1"}),
+                    "arguments": json.dumps(
+                        {
+                            "channel_id": "42",
+                            "user_id": "9001",
+                            "attachment_ref": "att_1",
+                        }
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -493,7 +569,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_image_message_requires_path_or_ref(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_image_message_requires_path_or_ref(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n    - '9001'\n",
@@ -503,7 +581,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -538,7 +618,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_get_pairing_ids_returns_configured_pairs(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_get_pairing_ids_returns_configured_pairs(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         pairs_config = tmp_path / "pairs.yaml"
         pairs_config.write_text(
@@ -549,7 +631,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -584,7 +668,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -619,7 +705,9 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
@@ -652,7 +740,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_text_message_allows_when_user_id_is_paired(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_text_message_allows_when_user_id_is_paired(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '9001'\n",
@@ -662,14 +752,18 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
         await runtime.initialize()
 
         sender = AsyncMock()
-        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        sender.send_message = AsyncMock(
+            return_value={"status": "sent", "message_id": "7"}
+        )
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
@@ -683,7 +777,9 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_text_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                    "arguments": json.dumps(
+                        {"channel_id": "42", "user_id": "9001", "text": "hello"}
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -697,7 +793,9 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_text_message_errors_when_user_id_not_paired(self, tmp_path, monkeypatch) -> None:
+    async def test_builtin_send_text_message_errors_when_user_id_not_paired(
+        self, tmp_path, monkeypatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         (tmp_path / "pairs.yaml").write_text(
             "pairs_by_channel:\n  my-bot:\n    - '42'\n",
@@ -707,14 +805,18 @@ class TestBuiltinMCPRuntime:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
         await runtime.initialize()
 
         sender = AsyncMock()
-        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        sender.send_message = AsyncMock(
+            return_value={"status": "sent", "message_id": "7"}
+        )
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
@@ -728,7 +830,9 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_text_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                    "arguments": json.dumps(
+                        {"channel_id": "42", "user_id": "9001", "text": "hello"}
+                    ),
                 },
             },
             execution_context=execution_context,
@@ -743,18 +847,24 @@ class TestBuiltinMCPRuntime:
         await runtime.shutdown()
 
     @pytest.mark.asyncio
-    async def test_builtin_send_text_message_errors_when_channel_name_missing(self) -> None:
+    async def test_builtin_send_text_message_errors_when_channel_name_missing(
+        self,
+    ) -> None:
         runtime = MCPRuntimeManager(
             MCPConfig(
                 servers=[
-                    MCPServerConfig(name="builtin-core", transport="builtin", enabled=True),
+                    MCPServerConfig(
+                        name="builtin-core", transport="builtin", enabled=True
+                    ),
                 ]
             )
         )
         await runtime.initialize()
 
         sender = AsyncMock()
-        sender.send_message = AsyncMock(return_value={"status": "sent", "message_id": "7"})
+        sender.send_message = AsyncMock(
+            return_value={"status": "sent", "message_id": "7"}
+        )
         execution_context = ToolExecutionContext(
             execution_mode="chat",
             channel_id="42",
@@ -768,7 +878,9 @@ class TestBuiltinMCPRuntime:
                 "type": "function",
                 "function": {
                     "name": "llm_expose_send_text_message",
-                    "arguments": json.dumps({"channel_id": "42", "user_id": "9001", "text": "hello"}),
+                    "arguments": json.dumps(
+                        {"channel_id": "42", "user_id": "9001", "text": "hello"}
+                    ),
                 },
             },
             execution_context=execution_context,

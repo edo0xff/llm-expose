@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,15 +14,15 @@ class ProviderConfig(BaseModel):
         description="Provider name, e.g. 'openai', 'local', 'anthropic'"
     )
     model: str = Field(description="Model identifier, e.g. 'gpt-4o', 'llama3'")
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         default=None,
         description="API key for the provider (not required for local models)",
     )
-    base_url: Optional[str] = Field(
+    base_url: str | None = Field(
         default=None,
         description="Base URL for local or self-hosted models (e.g. LM Studio, Ollama proxy)",
     )
-    supports_vision: Optional[bool] = Field(
+    supports_vision: bool | None = Field(
         default=None,
         description=(
             "Override model vision capability detection. "
@@ -48,11 +48,11 @@ class TelegramClientConfig(BaseModel):
         default_factory=list,
         description="List of MCP server names attached to this channel",
     )
-    system_prompt_path: Optional[str] = Field(
+    system_prompt_path: str | None = Field(
         default=None,
         description="Path to a file containing the custom system prompt for this channel. Falls back to default when omitted.",
     )
-    model_name: Optional[str] = Field(
+    model_name: str | None = Field(
         default=None,
         description="Default LLM model name for this channel (used with --llm-completion)",
     )
@@ -81,7 +81,7 @@ class TelegramClientConfig(BaseModel):
 
     @field_validator("system_prompt_path")
     @classmethod
-    def validate_system_prompt_path(cls, value: Optional[str]) -> Optional[str]:
+    def validate_system_prompt_path(cls, value: str | None) -> str | None:
         """Validate system prompt path by trimming outer whitespace."""
         if value is None:
             return None
@@ -90,7 +90,7 @@ class TelegramClientConfig(BaseModel):
 
     @field_validator("model_name")
     @classmethod
-    def normalize_model_name(cls, value: Optional[str]) -> Optional[str]:
+    def normalize_model_name(cls, value: str | None) -> str | None:
         """Normalize optional model name by trimming outer whitespace."""
         if value is None:
             return None
@@ -105,7 +105,7 @@ class MCPServerConfig(BaseModel):
     transport: Literal["stdio", "sse", "http", "builtin"] = Field(
         default="stdio", description="Transport type used to connect to the MCP server"
     )
-    command: Optional[str] = Field(
+    command: str | None = Field(
         default=None,
         description="Command to run for stdio transport (e.g. 'npx', 'uvx')",
     )
@@ -113,7 +113,7 @@ class MCPServerConfig(BaseModel):
         default_factory=list,
         description="Arguments passed to the command for stdio transport",
     )
-    url: Optional[str] = Field(
+    url: str | None = Field(
         default=None,
         description="Server URL for SSE or HTTP transport",
     )
@@ -141,7 +141,7 @@ class MCPServerConfig(BaseModel):
 
     @field_validator("command")
     @classmethod
-    def command_must_not_be_empty_when_present(cls, v: Optional[str]) -> Optional[str]:
+    def command_must_not_be_empty_when_present(cls, v: str | None) -> str | None:
         """Normalize optional command by trimming whitespace."""
         if v is None:
             return None
@@ -150,7 +150,7 @@ class MCPServerConfig(BaseModel):
 
     @field_validator("url")
     @classmethod
-    def url_must_not_be_empty_when_present(cls, v: Optional[str]) -> Optional[str]:
+    def url_must_not_be_empty_when_present(cls, v: str | None) -> str | None:
         """Normalize optional URL by trimming whitespace."""
         if v is None:
             return None
@@ -230,11 +230,11 @@ class DiscordClientConfig(BaseModel):
         default_factory=list,
         description="List of MCP server names attached to this channel",
     )
-    system_prompt_path: Optional[str] = Field(
+    system_prompt_path: str | None = Field(
         default=None,
         description="Path to a file containing the custom system prompt for this channel. Falls back to default when omitted.",
     )
-    model_name: Optional[str] = Field(
+    model_name: str | None = Field(
         default=None,
         description="Default LLM model name for this channel (used with --llm-completion)",
     )
@@ -263,7 +263,7 @@ class DiscordClientConfig(BaseModel):
 
     @field_validator("system_prompt_path")
     @classmethod
-    def validate_system_prompt_path(cls, value: Optional[str]) -> Optional[str]:
+    def validate_system_prompt_path(cls, value: str | None) -> str | None:
         """Validate system prompt path by trimming outer whitespace."""
         if value is None:
             return None
@@ -272,7 +272,7 @@ class DiscordClientConfig(BaseModel):
 
     @field_validator("model_name")
     @classmethod
-    def normalize_model_name(cls, value: Optional[str]) -> Optional[str]:
+    def normalize_model_name(cls, value: str | None) -> str | None:
         """Normalize optional model name by trimming outer whitespace."""
         if value is None:
             return None
@@ -283,7 +283,7 @@ class DiscordClientConfig(BaseModel):
 # TODO: Add SlackClientConfig when Slack client is implemented
 
 ClientConfig = Annotated[
-    Union[TelegramClientConfig, DiscordClientConfig],
+    TelegramClientConfig | DiscordClientConfig,
     Field(discriminator="client_type"),
 ]
 
@@ -292,7 +292,7 @@ class ExposureConfig(BaseModel):
     """Top-level configuration for a single LLM exposure."""
 
     name: str = Field(description="Unique name for this exposure configuration")
-    channel_name: Optional[str] = Field(
+    channel_name: str | None = Field(
         default=None,
         description="Selected saved channel config name used for pair scoping.",
     )
@@ -320,7 +320,7 @@ class ExposureConfig(BaseModel):
 
     @field_validator("channel_name")
     @classmethod
-    def normalize_channel_name(cls, value: Optional[str]) -> Optional[str]:
+    def normalize_channel_name(cls, value: str | None) -> str | None:
         """Normalize optional channel namespace by trimming whitespace."""
         if value is None:
             return None

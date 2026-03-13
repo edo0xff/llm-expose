@@ -149,7 +149,9 @@ def strip_image_parts(messages: list[Message]) -> tuple[list[Message], int]:
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "image_url":
                     image_url = part.get("image_url")
-                    if isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
+                    if isinstance(image_url, dict) and isinstance(
+                        image_url.get("url"), str
+                    ):
                         stripped_count += 1
                         continue
                 kept_parts.append(part)
@@ -222,9 +224,9 @@ def normalize_mcp_content(content: Any) -> list[dict[str, Any]]:
         item_type = item.get("type")
 
         if item_type == "text":
-            text_value = item.get("text")
-            if isinstance(text_value, str) and text_value:
-                normalized.append({"type": "text", "text": text_value})
+            text_part = item.get("text")
+            if isinstance(text_part, str) and text_part:
+                normalized.append({"type": "text", "text": text_part})
             continue
 
         if item_type == "image_url":
@@ -263,7 +265,9 @@ def normalize_mcp_content(content: Any) -> list[dict[str, Any]]:
                 data = source.get("data")
                 if not isinstance(data, str) or not data:
                     continue
-                media_type = source.get("media_type") or source.get("mime_type") or "image/png"
+                media_type = (
+                    source.get("media_type") or source.get("mime_type") or "image/png"
+                )
                 normalized.append(
                     {
                         "type": "image_url",

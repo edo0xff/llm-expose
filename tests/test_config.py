@@ -5,37 +5,37 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from llm_expose.config.loader import (
+    add_pair,
+    delete_channel,
+    delete_mcp_server,
+    delete_model,
+    delete_pair,
+    get_mcp_server,
+    get_pairs_for_channel,
+    list_channels,
+    list_mcp_servers,
+    list_models,
+    list_pairs,
+    load_channel,
+    load_mcp_config,
+    load_mcp_settings,
+    load_model,
+    save_channel,
+    save_mcp_server,
+    save_mcp_settings,
+    save_model,
+)
 from llm_expose.config.models import (
+    ClientConfig,
+    DiscordClientConfig,
     MCPServerConfig,
     MCPSettingsConfig,
     ProviderConfig,
     TelegramClientConfig,
-    DiscordClientConfig,
-    ClientConfig,
 )
-from llm_expose.config.loader import (
-    add_pair,
-    delete_model,
-    delete_channel,
-    delete_pair,
-    delete_mcp_server,
-    get_pairs_for_channel,
-    get_mcp_server,
-    list_models,
-    list_channels,
-    list_mcp_servers,
-    list_pairs,
-    load_model,
-    load_channel,
-    load_mcp_config,
-    load_mcp_settings,
-    save_model,
-    save_channel,
-    save_mcp_server,
-    save_mcp_settings,
-)
-
 
 # ---------------------------------------------------------------------------
 # Model validation tests
@@ -56,15 +56,15 @@ class TestProviderConfig:
         assert cfg.model == "gpt-4o"
 
     def test_empty_provider_name_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ProviderConfig(provider_name="", model="gpt-4o")
 
     def test_empty_model_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ProviderConfig(provider_name="openai", model="")
 
     def test_whitespace_only_provider_name_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ProviderConfig(provider_name="   ", model="gpt-4o")
 
     def test_local_config_with_base_url(self) -> None:
@@ -95,11 +95,11 @@ class TestTelegramClientConfig:
         assert cfg.bot_token == "123456:ABC"
 
     def test_empty_token_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TelegramClientConfig(bot_token="")
 
     def test_whitespace_only_token_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TelegramClientConfig(bot_token="   ")
 
     def test_mcp_servers_defaults_to_empty(self) -> None:
@@ -160,11 +160,11 @@ class TestDiscordClientConfig:
         assert cfg.bot_token == "my-discord-token"
 
     def test_empty_token_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             DiscordClientConfig(bot_token="")
 
     def test_whitespace_only_token_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             DiscordClientConfig(bot_token="   ")
 
     def test_mcp_servers_defaults_to_empty(self) -> None:
@@ -202,15 +202,21 @@ class TestDiscordClientConfig:
 
     def test_client_config_union_routes_to_discord(self) -> None:
         from pydantic import TypeAdapter
+
         adapter: TypeAdapter[ClientConfig] = TypeAdapter(ClientConfig)
-        cfg = adapter.validate_python({"client_type": "discord", "bot_token": "discord-tok"})
+        cfg = adapter.validate_python(
+            {"client_type": "discord", "bot_token": "discord-tok"}
+        )
         assert isinstance(cfg, DiscordClientConfig)
         assert cfg.client_type == "discord"
 
     def test_client_config_union_routes_to_telegram(self) -> None:
         from pydantic import TypeAdapter
+
         adapter: TypeAdapter[ClientConfig] = TypeAdapter(ClientConfig)
-        cfg = adapter.validate_python({"client_type": "telegram", "bot_token": "123:tok"})
+        cfg = adapter.validate_python(
+            {"client_type": "telegram", "bot_token": "123:tok"}
+        )
         assert isinstance(cfg, TelegramClientConfig)
         assert cfg.client_type == "telegram"
 
@@ -223,7 +229,9 @@ class TestMCPConfig:
         assert cfg.command == "npx"
 
     def test_valid_sse_server(self) -> None:
-        cfg = MCPServerConfig(name="remote", transport="sse", url="http://localhost:3000/sse")
+        cfg = MCPServerConfig(
+            name="remote", transport="sse", url="http://localhost:3000/sse"
+        )
         assert cfg.transport == "sse"
         assert cfg.url == "http://localhost:3000/sse"
 
@@ -280,7 +288,9 @@ class TestModelLoader:
     def _make_provider(self) -> ProviderConfig:
         return ProviderConfig(provider_name="openai", model="gpt-4o")
 
-    def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_save_and_load_roundtrip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         cfg = self._make_provider()
         saved_path = save_model("my-model", cfg)
@@ -290,17 +300,23 @@ class TestModelLoader:
         assert loaded.provider_name == cfg.provider_name
         assert loaded.model == cfg.model
 
-    def test_load_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_nonexistent_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             load_model("does-not-exist")
 
-    def test_list_empty_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_empty_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         result = list_models()
         assert result == []
 
-    def test_list_returns_all_names(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_returns_all_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         cfg = self._make_provider()
         for name in ("charlie", "alpha", "beta"):
@@ -308,14 +324,18 @@ class TestModelLoader:
         result = list_models()
         assert result == ["alpha", "beta", "charlie"]  # sorted
 
-    def test_delete_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         cfg = self._make_provider()
         save_model("to-delete", cfg)
         delete_model("to-delete")
         assert list_models() == []
 
-    def test_delete_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_nonexistent_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             delete_model("ghost")
@@ -327,7 +347,9 @@ class TestChannelLoader:
     def _make_client(self) -> TelegramClientConfig:
         return TelegramClientConfig(bot_token="123:tok")
 
-    def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_save_and_load_roundtrip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         cfg = self._make_client()
         saved_path = save_channel("my-channel", cfg)
@@ -356,17 +378,23 @@ class TestChannelLoader:
         assert loaded.mcp_servers == ["filesystem"]
         assert loaded.system_prompt_path == "/etc/prompts/channel.txt"
 
-    def test_load_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_nonexistent_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             load_channel("does-not-exist")
 
-    def test_list_empty_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_empty_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         result = list_channels()
         assert result == []
 
-    def test_list_returns_all_names(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_returns_all_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         cfg = self._make_client()
         for name in ("charlie", "alpha", "beta"):
@@ -374,14 +402,18 @@ class TestChannelLoader:
         result = list_channels()
         assert result == ["alpha", "beta", "charlie"]  # sorted
 
-    def test_delete_channel(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_channel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         cfg = self._make_client()
         save_channel("to-delete", cfg)
         delete_channel("to-delete")
         assert list_channels() == []
 
-    def test_delete_nonexistent_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_nonexistent_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             delete_channel("ghost")
@@ -459,22 +491,34 @@ class TestMCPLoader:
         assert [server.name for server in config.servers] == ["builtin-core"]
         assert config.servers[0].transport == "builtin"
 
-    def test_save_and_list_servers(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_save_and_list_servers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
-        save_mcp_server(MCPServerConfig(name="db", transport="sse", url="http://localhost:3000/sse"))
+        save_mcp_server(
+            MCPServerConfig(name="db", transport="sse", url="http://localhost:3000/sse")
+        )
         assert list_mcp_servers() == ["builtin-core", "db", "web"]
 
-    def test_http_transport_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_http_transport_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that HTTP transport is properly supported in MCP server config."""
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
-        save_mcp_server(MCPServerConfig(name="http-server", transport="http", url="http://localhost:8080/mcp"))
+        save_mcp_server(
+            MCPServerConfig(
+                name="http-server", transport="http", url="http://localhost:8080/mcp"
+            )
+        )
         server = get_mcp_server("http-server")
         assert server.transport == "http"
         assert server.url == "http://localhost:8080/mcp"
         assert list_mcp_servers() == ["builtin-core", "http-server"]
 
-    def test_builtin_transport_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_builtin_transport_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         save_mcp_server(MCPServerConfig(name="builtin-core", transport="builtin"))
         server = get_mcp_server("builtin-core")
@@ -520,25 +564,33 @@ class TestMCPLoader:
 
         assert server.transport == "builtin"
 
-    def test_delete_server(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_server(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         save_mcp_server(MCPServerConfig(name="web", transport="stdio", command="npx"))
         delete_mcp_server("web")
         assert list_mcp_servers() == ["builtin-core"]
 
-    def test_delete_nonexistent_server_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_nonexistent_server_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         with pytest.raises(FileNotFoundError):
             delete_mcp_server("ghost")
 
-    def test_load_default_mcp_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_default_mcp_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         settings = load_mcp_settings()
         assert settings.confirmation_mode == "optional"
         assert settings.tool_timeout_seconds == 30
         assert settings.expose_attachment_paths is False
 
-    def test_save_mcp_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_save_mcp_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         save_mcp_settings(
             MCPSettingsConfig(
@@ -554,11 +606,15 @@ class TestMCPLoader:
 
 
 class TestPairLoader:
-    def test_list_pairs_defaults_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_pairs_defaults_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         assert list_pairs() == {}
 
-    def test_add_pair_and_get_pairs_for_channel(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_add_pair_and_get_pairs_for_channel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         add_pair("telegram-main", "42")
         add_pair("telegram-main", "84")
@@ -566,7 +622,9 @@ class TestPairLoader:
 
         assert get_pairs_for_channel("telegram-main") == ["42", "84"]
 
-    def test_list_pairs_can_filter_channel(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_list_pairs_can_filter_channel(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         add_pair("alpha", "1")
         add_pair("beta", "2")
@@ -574,13 +632,17 @@ class TestPairLoader:
         assert list_pairs("alpha") == {"alpha": ["1"]}
         assert list_pairs("missing") == {"missing": []}
 
-    def test_delete_pair_removes_channel_when_last_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_pair_removes_channel_when_last_entry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         add_pair("telegram-main", "42")
         delete_pair("telegram-main", "42")
         assert list_pairs() == {}
 
-    def test_delete_missing_pair_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_delete_missing_pair_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("LLM_EXPOSE_CONFIG_DIR", str(tmp_path))
         add_pair("telegram-main", "42")
         with pytest.raises(FileNotFoundError):

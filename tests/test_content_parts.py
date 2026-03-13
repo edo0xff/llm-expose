@@ -38,7 +38,10 @@ def test_strip_image_parts_removes_images_and_preserves_text_parts() -> None:
             "role": "user",
             "content": [
                 {"type": "text", "text": "hello"},
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/jpeg;base64,AAAA"},
+                },
             ],
         }
     ]
@@ -85,7 +88,9 @@ def test_build_local_attachment_descriptor_respects_path_redaction(tmp_path) -> 
     image_file = tmp_path / "frame.jpg"
     image_file.write_bytes(b"abc")
 
-    redacted = build_local_attachment_descriptor(image_file, kind="image", include_path=False)
+    redacted = build_local_attachment_descriptor(
+        image_file, kind="image", include_path=False
+    )
     visible = build_local_attachment_descriptor(
         image_file,
         kind="image",
