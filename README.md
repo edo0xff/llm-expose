@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="550" alt="LLM Expose Logo" src="docs/assets/logo.png">
+<img width="550" alt="LLM Expose Logo" src="https://i.imgur.com/8VzDDfH.png">
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Language: Python](https://img.shields.io/badge/Language-Python-3776ab?logo=python&logoColor=white)](https://www.python.org/)
