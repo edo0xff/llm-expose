@@ -15,7 +15,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - YAML-based configuration loader and models.
 - Baseline test suite for CLI, clients, config, providers, and runtime.
 
-## [0.1.1rc1] - 2026-06-10
+## [0.1.1rc1] - 2026-03-10
 
 ### Changed
 - Add docs, CI, packaging & project metadata
@@ -23,7 +23,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Add HTTP transport support for MCP servers
 - Stabilize typing, lint fixes, and test compatibility
 
-## [0.1.2rc1] - 2026-06-10
+## [0.1.2rc1] - 2026-03-10
 
 ### Changed
 - Fixing publish workflows
+
+## [0.1.2] - 2026-03-12
+
+### Changed
+- Publish 0.1.2 to PyPI with updated changelog and docs links
