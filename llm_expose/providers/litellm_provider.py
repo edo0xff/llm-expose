@@ -289,6 +289,7 @@ class LiteLLMProvider(BaseProvider):
         Yields:
             Text delta strings as they are received from the model.
         """
+
         async def _stream() -> AsyncIterator[str]:
             prepared_messages = self._prepare_messages(messages)
             request_kwargs: dict[str, Any] = {}
