@@ -14,3 +14,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Pairing workflow for channel access control.
 - YAML-based configuration loader and models.
 - Baseline test suite for CLI, clients, config, providers, and runtime.
+
+## [0.1.1rc1] - 2026-06-10
+
+### Changed
+- Add docs, CI, packaging & project metadata
+- Add documentation site pages, styles, and README badges
+- Add HTTP transport support for MCP servers
+- Stabilize typing, lint fixes, and test compatibility
