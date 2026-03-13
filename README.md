@@ -15,6 +15,8 @@
 
 ---
 
+![Screenshot](https://i.imgur.com/6nizPQE.png)
+
 `llm-expose` gives you a channel-first CLI workflow: configure providers, attach channels, control pairings, and optionally integrate MCP servers for tool-aware completions.
 
 ## Features
