@@ -474,19 +474,22 @@ class TestDiscordClient:
         assert "boom" in sent_text
 
     @pytest.mark.asyncio
-    async def test_start_registers_named_listeners(self) -> None:
+    async def test_start_registers_event_decorators(self) -> None:
         cfg = DiscordClientConfig(bot_token="discord-token")
         client = DiscordClient(cfg, handler=AsyncMock(return_value="reply"))
 
         mock_bot = MagicMock()
-        mock_bot.add_listener = MagicMock()
+        mock_bot.event = MagicMock(side_effect=lambda fn: fn)
         mock_bot.start = AsyncMock(return_value=None)
 
         with patch("llm_expose.clients.discord.discord.Client", return_value=mock_bot):
             await client.start()
 
-        mock_bot.add_listener.assert_any_call(client._on_ready, "on_ready")
-        mock_bot.add_listener.assert_any_call(client._on_message, "on_message")
+        assert mock_bot.event.call_count == 2
+        registered_events = {
+            call.args[0].__name__ for call in mock_bot.event.call_args_list
+        }
+        assert registered_events == {"on_ready", "on_message"}
         mock_bot.start.assert_awaited_once_with("discord-token")
 
     def test_build_intents_enables_message_handling(self) -> None:
