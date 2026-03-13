@@ -22,3 +22,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Add documentation site pages, styles, and README badges
 - Add HTTP transport support for MCP servers
 - Stabilize typing, lint fixes, and test compatibility
+
+## [0.1.2rc1] - 2026-06-10
+
+### Changed
+- Fixing publish workflows
